@@ -8,6 +8,8 @@ subscribed_chats.json
 
 # Ekran yozuvlari / vaqtinchalik media
 rec_*.mp4
+lastrec_*.mp4
+dvr/
 *.mp4
 *.png
 *.jpg

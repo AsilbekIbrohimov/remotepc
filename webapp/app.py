@@ -6,6 +6,7 @@ import json
 import os
 from pathlib import Path
 
+import aiohttp
 from aiohttp import web
 from PIL import ImageGrab, ImageDraw
 from dotenv import load_dotenv
@@ -14,6 +15,8 @@ BASE_DIR = Path(__file__).resolve().parent.parent
 load_dotenv(BASE_DIR / ".env")
 
 OWNER_ID = int(os.environ["TG_OWNER_ID"])
+BOT_TOKEN = os.environ.get("TG_BOT_TOKEN", "").strip().strip("'\"")
+MAX_TG_BYTES = 50 * 1024 * 1024
 
 # ===== REMOTE CONTROL (sichqoncha / klaviatura) =====
 _user32 = ctypes.windll.user32
@@ -23,6 +26,19 @@ except Exception:
     pass
 _SCREEN_W = _user32.GetSystemMetrics(0)
 _SCREEN_H = _user32.GetSystemMetrics(1)
+_SM_XVIRT, _SM_YVIRT, _SM_CXVIRT, _SM_CYVIRT = 76, 77, 78, 79
+
+
+def _capture_bounds():
+    # STREAM_CFG["allscreens"] yoqilsa — barcha monitorlar (virtual ekran), aks holda asosiy
+    if STREAM_CFG.get("allscreens"):
+        return (
+            _user32.GetSystemMetrics(_SM_XVIRT),
+            _user32.GetSystemMetrics(_SM_YVIRT),
+            _user32.GetSystemMetrics(_SM_CXVIRT),
+            _user32.GetSystemMetrics(_SM_CYVIRT),
+        )
+    return 0, 0, _SCREEN_W, _SCREEN_H
 
 MOUSEEVENTF_LEFTDOWN, MOUSEEVENTF_LEFTUP = 0x0002, 0x0004
 MOUSEEVENTF_RIGHTDOWN, MOUSEEVENTF_RIGHTUP = 0x0008, 0x0010
@@ -65,8 +81,9 @@ def do_combo(combo: str) -> None:
 
 
 def do_click(fx: float, fy: float, button: str = "left") -> None:
-    x = int(fx * _SCREEN_W)
-    y = int(fy * _SCREEN_H)
+    ox, oy, w, h = _capture_bounds()
+    x = int(ox + fx * w)
+    y = int(oy + fy * h)
     _user32.SetCursorPos(x, y)
     if button == "right":
         _user32.mouse_event(MOUSEEVENTF_RIGHTDOWN, 0, 0, 0, 0)
@@ -81,7 +98,8 @@ def do_click(fx: float, fy: float, button: str = "left") -> None:
 
 
 def do_move(fx: float, fy: float) -> None:
-    _user32.SetCursorPos(int(fx * _SCREEN_W), int(fy * _SCREEN_H))
+    ox, oy, w, h = _capture_bounds()
+    _user32.SetCursorPos(int(ox + fx * w), int(oy + fy * h))
 
 
 class _POINT(ctypes.Structure):
@@ -131,7 +149,7 @@ def do_special(name: str) -> None:
 
 
 # ===== SCREENSHOT =====
-STREAM_CFG = {"w": 900, "q": 38, "fps": 20, "cursor": 1}
+STREAM_CFG = {"w": 900, "q": 38, "fps": 20, "cursor": 1, "allscreens": 0}
 
 # Windows kursor o'qi shakli (uchidan boshlab)
 _CURSOR_SHAPE = [(0, 0), (0, 18), (5, 14), (8, 20), (11, 19), (7, 12), (13, 12)]
@@ -148,8 +166,9 @@ def _draw_cursor(img, x, y):
 def take_jpeg_bytes() -> bytes:
     w = STREAM_CFG["w"]
     q = STREAM_CFG["q"]
-    img = ImageGrab.grab()
-    ow = img.width
+    allscreens = bool(STREAM_CFG.get("allscreens"))
+    ox, oy, _, _ = _capture_bounds()
+    img = ImageGrab.grab(all_screens=allscreens)
     if img.width > w:
         ratio = w / img.width
         img = img.resize((w, int(img.height * ratio)))
@@ -159,7 +178,7 @@ def take_jpeg_bytes() -> bytes:
         try:
             pt = _POINT()
             _user32.GetCursorPos(ctypes.byref(pt))
-            _draw_cursor(img, int(pt.x * ratio), int(pt.y * ratio))
+            _draw_cursor(img, int((pt.x - ox) * ratio), int((pt.y - oy) * ratio))
         except Exception:
             pass
     buf = io.BytesIO()
@@ -246,6 +265,10 @@ async def config_api(request: web.Request) -> web.Response:
         STREAM_CFG["q"] = max(20, min(85, int(float(q["q"]))))
     if "fps" in q:
         STREAM_CFG["fps"] = max(1, min(30, int(float(q["fps"]))))
+    if "cursor" in q:
+        STREAM_CFG["cursor"] = 1 if q["cursor"] in ("1", "true", "on") else 0
+    if "allscreens" in q:
+        STREAM_CFG["allscreens"] = 1 if q["allscreens"] in ("1", "true", "on") else 0
     return _cors(web.json_response(STREAM_CFG))
 
 
@@ -368,6 +391,19 @@ html,body { height:100%; background:#000; color:#fff; font-family:-apple-system,
   .pane button { max-width:100%; min-width:0; }
   #trackpad { height:120px; }
 }
+#fm { position:fixed; inset:0; background:#101014; z-index:300; display:flex; flex-direction:column; }
+#fm[hidden]{ display:none; }
+#fmbar { display:flex; align-items:center; gap:8px; padding:10px; background:#181820; border-bottom:1px solid #2a2a2a; }
+#fmbar button { width:40px; height:40px; border:none; border-radius:8px; background:#2b2b2b; color:#fff; font-size:16px; }
+#fmpath { flex:1; font-size:12px; color:#7ab8ff; font-family:monospace; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+#fmlist { flex:1; overflow-y:auto; padding:4px 6px; }
+.fmitem { display:flex; align-items:center; gap:8px; padding:9px 10px; border-bottom:1px solid #1e1e26; font-size:14px; }
+.fmitem[data-dir]:active { background:#22222a; }
+.fmname { overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+.fmitem .sz { margin-left:auto; color:#777; font-size:11px; white-space:nowrap; }
+.fmact { flex:0 0 auto; width:42px; height:38px; border:none; border-radius:8px; background:#2b2b2b; color:#fff; font-size:15px; }
+.fmact:active { background:#2fbf60; }
+.fmempty { text-align:center; color:#666; padding:30px; font-size:13px; }
 </style>
 </head>
 <body>
@@ -385,7 +421,7 @@ html,body { height:100%; background:#000; color:#fff; font-family:-apple-system,
     </div>
     <div id="zoomlevel" style="display:none;">1.0x</div>
     <div id="panel">
-      <h4>Sozlamalar</h4>
+      <h4>Sozlamalar <span id="panelClose" style="float:right;cursor:pointer;color:#f55;">✕</span></h4>
       <label>Kenglik: <span class="val" id="wval">900</span>px</label>
       <input type="range" id="wslider" min="480" max="1920" step="60" value="900">
       <label>Tiniqlik: <span class="val" id="qval">38</span></label>
@@ -396,6 +432,10 @@ html,body { height:100%; background:#000; color:#fff; font-family:-apple-system,
         <button data-w="720" data-q="30" data-f="25">Tez</button>
         <button data-w="1100" data-q="50" data-f="15">O'rta</button>
         <button data-w="1600" data-q="70" data-f="8">Tiniq</button>
+      </div>
+      <div class="presets" style="margin-top:8px;">
+        <button id="toggleScreens">🖥 Barcha monitorlar</button>
+        <button id="toggleCursor">🖱️ Kursor: ON</button>
       </div>
     </div>
   </div>
@@ -465,10 +505,20 @@ html,body { height:100%; background:#000; color:#fff; font-family:-apple-system,
         <button data-combo="win+e">📁 Explorer</button>
         <button data-combo="win+l">🔒 Qulflash</button>
         <button id="btnLand">⛶ Landscape</button>
+        <button id="btnFiles">📁 Fayllar</button>
         <button id="btnSettings">⚙️ Video sozlama</button>
       </div>
     </div>
   </div>
+</div>
+
+<div id="fm" hidden>
+  <div id="fmbar">
+    <button id="fmUp">⬆</button>
+    <span id="fmpath">/</span>
+    <button id="fmClose">✕</button>
+  </div>
+  <div id="fmlist"></div>
 </div>
 
 <script>
@@ -593,6 +643,8 @@ var pointers={}, startDist=0, maxPtr=0, downX=0,downY=0, moved=0, downT=0, lastX
 function isCtrl(t){ return t.closest('button,input,#panel'); }
 videoEl.addEventListener('pointerdown',function(e){
   if(isCtrl(e.target))return;
+  // sozlama paneli ochiq bo'lsa, videoga bosilganda yopiladi (klik yuborilmaydi)
+  if(panel && panel.style.display==='block'){ panel.style.display='none'; return; }
   pointers[e.pointerId]={x:e.clientX,y:e.clientY};
   var n=Object.keys(pointers).length; if(n>maxPtr)maxPtr=n;
   if(n===1){ downX=e.clientX;downY=e.clientY;moved=0;downT=Date.now();lastX=e.clientX;lastY=e.clientY;panning=true; }
@@ -641,11 +693,26 @@ var wV=document.getElementById('wval'),qV=document.getElementById('qval'),fV=doc
 var cfgTimer=null;
 function togglePanel(){ panel.style.display=panel.style.display==='block'?'none':'block'; }
 gear.onclick=togglePanel;
+document.getElementById('panelClose').onclick=function(){ panel.style.display='none'; };
 function sendCfg(){ fetch('/api/config?user_id='+userId+'&w='+wS.value+'&q='+qS.value+'&fps='+fS.value,{headers:HEADERS}).catch(function(){}); }
 function onSlide(){ wV.textContent=wS.value;qV.textContent=qS.value;fV.textContent=fS.value; clearTimeout(cfgTimer); cfgTimer=setTimeout(sendCfg,250); }
 wS.addEventListener('input',onSlide); qS.addEventListener('input',onSlide); fS.addEventListener('input',onSlide);
-var pbtns=panel.querySelectorAll('.presets button');
+var pbtns=panel.querySelectorAll('.presets button[data-w]');
 for(var i=0;i<pbtns.length;i++){ pbtns[i].onclick=function(){ wS.value=this.getAttribute('data-w'); qS.value=this.getAttribute('data-q'); fS.value=this.getAttribute('data-f'); onSlide(); }; }
+
+var screensOn=false, cursorOn=true;
+var tScreens=document.getElementById('toggleScreens'), tCursor=document.getElementById('toggleCursor');
+tScreens.onclick=function(){
+  screensOn=!screensOn;
+  tScreens.classList.toggle('active',screensOn);
+  tScreens.textContent = screensOn ? '🖥 Barcha: ON' : '🖥 Barcha monitorlar';
+  fetch('/api/config?user_id='+userId+'&allscreens='+(screensOn?1:0),{headers:HEADERS}).catch(function(){});
+};
+tCursor.onclick=function(){
+  cursorOn=!cursorOn;
+  tCursor.textContent = '🖱️ Kursor: '+(cursorOn?'ON':'OFF');
+  fetch('/api/config?user_id='+userId+'&cursor='+(cursorOn?1:0),{headers:HEADERS}).catch(function(){});
+};
 
 // ===== TABLAR =====
 var tabBtns=document.querySelectorAll('#tabs .tab');
@@ -758,11 +825,158 @@ function setLandscape(on){
 var btnLand=document.getElementById('btnLand');
 btnLand.onclick=function(){ setLandscape(!landOn); btnLand.textContent=landOn?'⛶ Portret':'⛶ Landscape'; btnLand.classList.toggle('active',landOn); };
 document.getElementById('btnSettings').onclick=togglePanel;
+
+// ===== FAYL MENEJERI =====
+var fm=document.getElementById('fm'), fmpath=document.getElementById('fmpath'), fmlist=document.getElementById('fmlist');
+var fmCur='';
+function fmFmt(n){ if(n>=1048576) return (n/1048576).toFixed(1)+'MB'; if(n>=1024) return (n/1024).toFixed(0)+'KB'; return n+'B'; }
+function fmLoad(path){
+  fmpath.textContent = path || 'Drayvlar';
+  fmlist.innerHTML='<div class="fmempty">Yuklanmoqda...</div>';
+  fetch('/api/fs/list?user_id='+userId+'&path='+encodeURIComponent(path||''),{headers:HEADERS})
+    .then(function(r){ return r.json(); })
+    .then(function(d){
+      if(d.error){ fmlist.innerHTML='<div class="fmempty">❌ '+d.error+'</div>'; return; }
+      fmCur=d.path; fm.dataset.parent = (d.parent===null?'__drives__':d.parent);
+      var html='';
+      function joinP(base, n){ if(!base) return n; return (base.endsWith('\\\\')?base:base+'\\\\')+n; }
+      d.dirs.forEach(function(name){
+        var child=joinP(d.path, name);
+        html+='<div class="fmitem" data-dir="'+encodeURIComponent(child)+'">📁 <span>'+name+'</span></div>';
+      });
+      d.files.forEach(function(f){
+        var ef=encodeURIComponent(joinP(d.path, f.name));
+        html+='<div class="fmitem"><span class="fmname">📄 '+f.name+'</span><span class="sz">'+fmFmt(f.size)+'</span>'+
+          '<button class="fmact" data-send="'+ef+'">📤</button>'+
+          '<button class="fmact" data-open="'+ef+'">▶</button></div>';
+      });
+      if(!html) html='<div class="fmempty">Bo\\'sh papka</div>';
+      fmlist.innerHTML=html;
+      var dirs=fmlist.querySelectorAll('.fmitem[data-dir]');
+      for(var i=0;i<dirs.length;i++){ dirs[i].onclick=function(){ fmLoad(decodeURIComponent(this.getAttribute('data-dir'))); }; }
+      var acts=fmlist.querySelectorAll('.fmact');
+      for(var j=0;j<acts.length;j++){
+        acts[j].onclick=function(e){
+          e.stopPropagation();
+          var send=this.getAttribute('data-send'), open=this.getAttribute('data-open');
+          if(send) fmSend(decodeURIComponent(send));
+          else if(open) fmOpen(decodeURIComponent(open));
+        };
+      }
+    })
+    .catch(function(e){ fmlist.innerHTML='<div class="fmempty">❌ '+e.message+'</div>'; });
+}
+function fmSend(path){
+  fmpath.textContent='📤 Telegramga yuborilmoqda...';
+  fetch('/api/fs/send?user_id='+userId+'&path='+encodeURIComponent(path),{headers:HEADERS})
+    .then(function(r){ return r.json(); })
+    .then(function(d){ fmpath.textContent = d.ok ? '✅ Telegramga yuborildi' : ('❌ '+(d.error||'xato')); setTimeout(function(){ fmpath.textContent=fmCur; }, 2800); })
+    .catch(function(e){ fmpath.textContent='❌ '+e.message; });
+}
+function fmOpen(path){
+  fmpath.textContent='▶ PC da ochilmoqda...';
+  fetch('/api/fs/open?user_id='+userId+'&path='+encodeURIComponent(path),{headers:HEADERS})
+    .then(function(r){ return r.json(); })
+    .then(function(d){ fmpath.textContent = d.ok ? '▶ PC da ochildi' : ('❌ '+(d.error||'xato')); setTimeout(function(){ fmpath.textContent=fmCur; }, 2000); })
+    .catch(function(e){ fmpath.textContent='❌ '+e.message; });
+}
+document.getElementById('btnFiles').onclick=function(){ fm.hidden=false; fmLoad(''); };
+document.getElementById('fmClose').onclick=function(){ fm.hidden=true; };
+document.getElementById('fmUp').onclick=function(){
+  var par=fm.dataset.parent;
+  if(par==='__drives__'||par==='') fmLoad('');
+  else fmLoad(par);
+};
 </script>
 </body>
 </html>"""
     html = html.replace("%OWNER%", str(OWNER_ID))
     return web.Response(text=html, content_type='text/html')
+
+
+def _list_drives():
+    import string
+    bitmask = ctypes.windll.kernel32.GetLogicalDrives()
+    return [f"{letter}:\\" for i, letter in enumerate(string.ascii_uppercase) if bitmask & (1 << i)]
+
+
+async def fs_list_api(request: web.Request) -> web.Response:
+    if not _auth_ok(request):
+        return _cors(web.json_response({"error": "Unauthorized"}, status=403))
+    path = request.query.get("path", "").strip()
+    try:
+        if not path:
+            return _cors(web.json_response({"path": "", "parent": None, "dirs": _list_drives(), "files": []}))
+        p = Path(path)
+        if not p.exists():
+            return _cors(web.json_response({"error": "Topilmadi"}, status=404))
+        dirs, files = [], []
+        with os.scandir(path) as it:
+            for e in it:
+                try:
+                    if e.is_dir():
+                        dirs.append(e.name)
+                    else:
+                        files.append({"name": e.name, "size": e.stat().st_size})
+                except OSError:
+                    pass
+        dirs.sort(key=str.lower)
+        files.sort(key=lambda f: f["name"].lower())
+        parent = "" if p.parent == p else str(p.parent)
+        return _cors(web.json_response({"path": str(p), "parent": parent, "dirs": dirs, "files": files}))
+    except Exception as e:
+        return _cors(web.json_response({"error": str(e)}, status=500))
+
+
+async def fs_get_api(request: web.Request) -> web.StreamResponse:
+    if not _auth_ok(request):
+        return web.Response(status=403, text="Unauthorized")
+    p = Path(request.query.get("path", ""))
+    if not p.is_file():
+        return web.Response(status=404, text="Fayl topilmadi")
+    return web.FileResponse(p, headers={
+        "Content-Disposition": f'attachment; filename="{p.name}"',
+        "Access-Control-Allow-Origin": "*",
+    })
+
+
+async def fs_send_api(request: web.Request) -> web.Response:
+    if not _auth_ok(request):
+        return _cors(web.json_response({"error": "Unauthorized"}, status=403))
+    p = Path(request.query.get("path", ""))
+    if not p.is_file():
+        return _cors(web.json_response({"error": "Fayl topilmadi"}, status=404))
+    if not BOT_TOKEN:
+        return _cors(web.json_response({"error": "Bot token yo'q"}, status=500))
+    size = p.stat().st_size
+    if size > MAX_TG_BYTES:
+        return _cors(web.json_response({"error": f"{size // (1024**2)}MB — 50MB dan katta"}, status=400))
+    try:
+        data = aiohttp.FormData()
+        data.add_field("chat_id", str(OWNER_ID))
+        data.add_field("document", p.read_bytes(), filename=p.name)
+        url = f"https://api.telegram.org/bot{BOT_TOKEN}/sendDocument"
+        async with aiohttp.ClientSession() as s:
+            async with s.post(url, data=data, timeout=aiohttp.ClientTimeout(total=120)) as r:
+                jr = await r.json()
+                if not jr.get("ok"):
+                    return _cors(web.json_response({"error": jr.get("description", "Telegram xato")}, status=500))
+        return _cors(web.json_response({"ok": True}))
+    except Exception as e:
+        return _cors(web.json_response({"error": str(e)}, status=500))
+
+
+async def fs_open_api(request: web.Request) -> web.Response:
+    if not _auth_ok(request):
+        return _cors(web.json_response({"error": "Unauthorized"}, status=403))
+    p = Path(request.query.get("path", ""))
+    if not p.exists():
+        return _cors(web.json_response({"error": "Topilmadi"}, status=404))
+    try:
+        os.startfile(str(p))
+        return _cors(web.json_response({"ok": True}))
+    except Exception as e:
+        return _cors(web.json_response({"error": str(e)}, status=500))
 
 
 async def init_app():
@@ -774,6 +988,10 @@ async def init_app():
     app.router.add_get('/api/config', config_api)
     app.router.add_get('/api/control', control_api)
     app.router.add_get('/api/ws', ws_api)
+    app.router.add_get('/api/fs/list', fs_list_api)
+    app.router.add_get('/api/fs/get', fs_get_api)
+    app.router.add_get('/api/fs/send', fs_send_api)
+    app.router.add_get('/api/fs/open', fs_open_api)
     app.router.add_options('/api/test', cors_handler)
     app.router.add_options('/api/screenshot', cors_handler)
     return app

@@ -13,6 +13,8 @@ from pathlib import Path
 
 import cv2
 import numpy as np
+import imageio.v2 as imageio
+import imageio_ffmpeg
 import matplotlib
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
@@ -93,15 +95,54 @@ dp.message.filter(F.from_user.id == OWNER_ID)
 dp.callback_query.filter(F.from_user.id == OWNER_ID)
 
 def get_main_keyboard() -> ReplyKeyboardMarkup:
-    rows = [
-        [KeyboardButton(text="📊 Holat"), KeyboardButton(text="💻 Jarayonlar")],
-        [KeyboardButton(text="📸 Skrinshot"), KeyboardButton(text="📈 Grafik")],
-    ]
+    rows = []
     # Telegram Mini App faqat HTTPS URL qabul qiladi; aks holda /start crash bo'ladi.
     if WEB_APP_URL.startswith("https://"):
         rows.append([KeyboardButton(text="🌐 Mini App", web_app=WebAppInfo(url=WEB_APP_URL))])
-    rows.append([KeyboardButton(text="🔒 Qulflash"), KeyboardButton(text="⚙️ Ko'proq")])
+    rows += [
+        [KeyboardButton(text="📊 Holat"), KeyboardButton(text="📸 Skrinshot")],
+        [KeyboardButton(text="📋 Menyu")],
+    ]
     return ReplyKeyboardMarkup(keyboard=rows, resize_keyboard=True)
+
+
+def _btn(text: str, data: str) -> InlineKeyboardButton:
+    return InlineKeyboardButton(text=text, callback_data=data)
+
+
+def menu_home() -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup(inline_keyboard=[
+        [_btn("🖥 Tizim", "menu:sys"), _btn("🎬 Media", "menu:media")],
+        [_btn("⚡ Quvvat", "menu:power"), _btn("🧰 Vositalar", "menu:tools")],
+    ])
+
+
+def menu_sys() -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup(inline_keyboard=[
+        [_btn("📊 Holat", "menu:act:status"), _btn("💻 Jarayonlar", "menu:act:proc")],
+        [_btn("📈 Grafik", "menu:act:graph"), _btn("📋 Clipboard", "menu:act:clip")],
+        [_btn("🔒 Qulflash", "menu:act:lock")],
+        [_btn("◀ Orqaga", "menu:home")],
+    ])
+
+
+def menu_media() -> InlineKeyboardMarkup:
+    rec = _btn("⏹ Yozishni to'xtatish", "menu:act:recstop") if _rec["on"] else _btn("🎬 Ekran yozish", "menu:act:rec")
+    face = _btn("🚫 Yuz kuzatuv OFF", "menu:act:faceoff") if _face["on"] else _btn("👤 Yuz kuzatuv", "menu:act:faceon")
+    return InlineKeyboardMarkup(inline_keyboard=[
+        [_btn("📸 Skrinshot", "menu:act:shot"), _btn("🎥 Live oqim", "menu:act:live")],
+        [rec],
+        [face],
+        [_btn("◀ Orqaga", "menu:home")],
+    ])
+
+
+def menu_tools() -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup(inline_keyboard=[
+        [_btn("🌐 URL ochish", "menu:hint:open"), _btn("▶️ Dastur", "menu:hint:run")],
+        [_btn("📋 Clipboard olish", "menu:act:clip"), _btn("📁 Fayl olish", "menu:hint:getfile")],
+        [_btn("◀ Orqaga", "menu:home")],
+    ])
 
 def power_menu() -> InlineKeyboardMarkup:
     rec_btn = (
@@ -187,6 +228,18 @@ async def start_recording() -> str:
     return "🔴 Ekran yozib olinmoqda... To'xtatish uchun /stop yuboring."
 
 
+_last_rec = {"path": None, "dur": 0}
+
+
+def rec_format_keyboard() -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup(
+        inline_keyboard=[[
+            InlineKeyboardButton(text="🎬 Media (video)", callback_data="rec:media"),
+            InlineKeyboardButton(text="📄 Fayl (hujjat)", callback_data="rec:file"),
+        ]]
+    )
+
+
 async def stop_recording(chat_id: int) -> str:
     if not _rec["on"]:
         return "Hozir yozib olish yo'q. Boshlash: /record"
@@ -198,17 +251,22 @@ async def stop_recording(chat_id: int) -> str:
     dur = int(time.time() - _rec["start"])
     try:
         size = os.path.getsize(path)
-        if size > MAX_TELEGRAM_FILE_BYTES:
-            return f"⚠️ Video {size // (1024**2)}MB — 50MB dan katta, yubora olmayman. ({dur}s)"
-        await bot.send_video(chat_id, FSInputFile(path), caption=f"🎬 Ekran yozuvi • {dur}s")
-        return ""
-    except Exception as e:
-        return f"❌ Xato: {e}"
-    finally:
+    except OSError:
+        return "❌ Video fayli topilmadi."
+    if size > MAX_TELEGRAM_FILE_BYTES:
         try:
             os.remove(path)
         except OSError:
             pass
+        return f"⚠️ Video {size // (1024**2)}MB — 50MB limitidan katta, yubora olmayman. ({dur}s)"
+    _last_rec.update(path=path, dur=dur)
+    mb = max(1, size // (1024**2))
+    await bot.send_message(
+        chat_id,
+        f"🎬 Yozuv tayyor • {dur}s • ~{mb}MB\nQaysi formatda yuboray?",
+        reply_markup=rec_format_keyboard(),
+    )
+    return ""
 
 _last_alert_time: dict[str, float] = {}
 _history: deque[tuple[float, float, float]] = deque(maxlen=HISTORY_MAX_SAMPLES)
@@ -490,6 +548,69 @@ async def on_more_menu(message: Message):
     await message.answer("⚙️ Boshqaruv:", reply_markup=power_menu())
 
 
+@dp.message(F.text == "📋 Menyu")
+async def on_menu_hub(message: Message):
+    await message.answer("📋 Asosiy menyu:", reply_markup=menu_home())
+
+
+_MENU_HINTS = {
+    "open": "🌐 URL ochish uchun:\n`/open google.com`",
+    "run": "▶️ Dastur ishga tushirish:\n`/run notepad`",
+    "getfile": "📁 Faylni olish uchun:\n`/getfile C:\\\\yo'l\\\\fayl.txt`",
+}
+
+
+@dp.callback_query(F.data.startswith("menu:"))
+async def on_menu_nav(callback: CallbackQuery):
+    d = callback.data.split(":")
+    sec = d[1]
+    msg = callback.message
+    cid = msg.chat.id
+    if sec == "home":
+        await msg.edit_text("📋 Asosiy menyu:", reply_markup=menu_home())
+    elif sec == "sys":
+        await msg.edit_text("🖥 Tizim:", reply_markup=menu_sys())
+    elif sec == "media":
+        await msg.edit_text("🎬 Media:", reply_markup=menu_media())
+    elif sec == "power":
+        await msg.edit_text("⚡ Quvvat:", reply_markup=power_menu())
+    elif sec == "tools":
+        await msg.edit_text("🧰 Vositalar:", reply_markup=menu_tools())
+    elif sec == "hint":
+        await bot.send_message(cid, _MENU_HINTS.get(d[2], ""), parse_mode="Markdown")
+    elif sec == "act":
+        a = d[2]
+        if a == "status":
+            await bot.send_message(cid, build_status_text(), parse_mode="Markdown")
+        elif a == "proc":
+            await bot.send_message(cid, build_processes_text(), parse_mode="Markdown")
+        elif a == "graph":
+            photo = build_graph_photo()
+            await (bot.send_photo(cid, photo) if photo else bot.send_message(cid, "Hali tarix yetarli emas."))
+        elif a == "shot":
+            await bot.send_photo(cid, take_screenshot())
+        elif a == "lock":
+            ctypes.windll.user32.LockWorkStation()
+            await bot.send_message(cid, "🔒 Ekran qulflandi.")
+        elif a == "clip":
+            await on_clip(msg)
+        elif a == "live":
+            await bot.send_message(cid, "🎥 Live uchun: /live buyrug'ini yuboring.")
+        elif a == "rec":
+            await bot.send_message(cid, await start_recording())
+        elif a == "recstop":
+            err = await stop_recording(cid)
+            if err:
+                await bot.send_message(cid, err)
+        elif a == "faceon":
+            await on_watchface(msg)
+            await msg.edit_text("🎬 Media:", reply_markup=menu_media())
+        elif a == "faceoff":
+            await on_stopface(msg)
+            await msg.edit_text("🎬 Media:", reply_markup=menu_media())
+    await callback.answer()
+
+
 @dp.callback_query(F.data.startswith("pw:"))
 async def on_power(callback: CallbackQuery):
     parts = callback.data.split(":")
@@ -519,7 +640,8 @@ async def on_power(callback: CallbackQuery):
     elif act == "recstop":
         await msg.edit_text("⏳ Video tayyorlanmoqda...")
         err = await stop_recording(msg.chat.id)
-        await bot.send_message(msg.chat.id, err or "✅ Yozuv yuborildi.", reply_markup=power_menu())
+        if err:
+            await bot.send_message(msg.chat.id, err, reply_markup=power_menu())
     elif act == "shot":
         await bot.send_photo(msg.chat.id, take_screenshot())
     elif act == "status":
@@ -528,6 +650,32 @@ async def on_power(callback: CallbackQuery):
         subprocess.run(["shutdown", "/a"])
         await msg.edit_text("✅ Rejalashtirilgan restart/shutdown bekor qilindi.", reply_markup=power_menu())
     await callback.answer()
+
+
+@dp.callback_query(F.data.startswith("rec:"))
+async def on_rec_format(callback: CallbackQuery):
+    kind = callback.data.split(":")[1]
+    path = _last_rec["path"]
+    if not path or not os.path.exists(path):
+        await callback.message.edit_text("❌ Fayl topilmadi (eskirgan yoki yuborilgan).")
+        await callback.answer()
+        return
+    await callback.answer("Yuborilmoqda...")
+    dur = _last_rec["dur"]
+    try:
+        if kind == "media":
+            await bot.send_video(callback.message.chat.id, FSInputFile(path), caption=f"🎬 Ekran yozuvi • {dur}s")
+        else:
+            await bot.send_document(callback.message.chat.id, FSInputFile(path), caption=f"📄 Ekran yozuvi • {dur}s")
+        await callback.message.edit_text("✅ Yuborildi.")
+    except Exception as e:
+        await callback.message.edit_text(f"❌ Xato: {e}")
+    finally:
+        try:
+            os.remove(path)
+        except OSError:
+            pass
+        _last_rec["path"] = None
 
 
 @dp.message(Command("record"))
@@ -751,6 +899,14 @@ async def set_bot_commands():
         BotCommand(command="stop_live", description="Live kuzatishni to'xtatish"),
         BotCommand(command="record", description="Ekranni videoga yozib olishni boshlash"),
         BotCommand(command="stop", description="Ekran yozuvini to'xtatib, videoni yuborish"),
+        BotCommand(command="open", description="Brauzerda URL ochish (/open google.com)"),
+        BotCommand(command="run", description="Dastur ishga tushirish (/run notepad)"),
+        BotCommand(command="clip", description="Kompyuter clipboard matnini olish"),
+        BotCommand(command="setclip", description="Clipboard'ga matn yozish (/setclip matn)"),
+        BotCommand(command="watchface", description="Kamera: yuz ko'rinsa rasm yuborish"),
+        BotCommand(command="stopface", description="Yuz kuzatuvini to'xtatish"),
+        BotCommand(command="lastrec", description="Oxirgi 10 daqiqa ekran yozuvini olish"),
+        BotCommand(command="dvr", description="Doimiy yozib borishni yoqish/o'chirish"),
     ])
 
 
@@ -763,9 +919,294 @@ async def notify_startup():
             print(f"Xabar yuborishda xato ({chat_id}): {e}")
 
 
+@dp.message(Command("open"))
+async def on_open(message: Message, command: CommandObject):
+    arg = (command.args or "").strip()
+    if not arg:
+        await message.answer("Foydalanish: `/open google.com` yoki `/open https://...`", parse_mode="Markdown")
+        return
+    url = arg if arg.startswith(("http://", "https://")) else "https://" + arg
+    try:
+        os.startfile(url)
+        await message.answer(f"🌐 Brauzerda ochilmoqda:\n{url}")
+    except Exception as e:
+        await message.answer(f"❌ Xato: {e}")
+
+
+@dp.message(Command("run"))
+async def on_run(message: Message, command: CommandObject):
+    cmd = (command.args or "").strip()
+    if not cmd:
+        await message.answer("Foydalanish: `/run notepad` yoki `/run calc`", parse_mode="Markdown")
+        return
+    try:
+        subprocess.Popen(cmd, shell=True)
+        await message.answer(f"▶️ Ishga tushirildi: `{cmd}`", parse_mode="Markdown")
+    except Exception as e:
+        await message.answer(f"❌ Xato: {e}")
+
+
+@dp.message(Command("clip"))
+async def on_clip(message: Message):
+    try:
+        out = subprocess.run(
+            ["powershell", "-NoProfile", "-Command", "Get-Clipboard -Raw"],
+            capture_output=True, text=True, timeout=10,
+        )
+        text = (out.stdout or "").strip()
+        if not text:
+            await message.answer("📋 Clipboard bo'sh yoki matn emas.")
+        elif len(text) > 4000:
+            await message.answer_document(
+                BufferedInputFile(text.encode("utf-8"), filename="clipboard.txt"),
+                caption="📋 Clipboard (uzun matn)",
+            )
+        else:
+            await message.answer(f"📋 Clipboard:\n\n{text}")
+    except Exception as e:
+        await message.answer(f"❌ Xato: {e}")
+
+
+@dp.message(Command("setclip"))
+async def on_setclip(message: Message, command: CommandObject):
+    text = command.args or ""
+    if not text:
+        await message.answer("Foydalanish: `/setclip yoziladigan matn`", parse_mode="Markdown")
+        return
+    try:
+        subprocess.run(["powershell", "-NoProfile", "-Command", "Set-Clipboard", "-Value", text], timeout=10)
+        await message.answer("✅ Kompyuter clipboard'iga yozildi.")
+    except Exception as e:
+        await message.answer(f"❌ Xato: {e}")
+
+
+# ===== YUZ ANIQLASH (kamera) =====
+FACE_COOLDOWN_SECONDS = 30
+_face = {"on": False, "thread": None}
+_face_cascade = None
+
+
+def _get_cascade():
+    global _face_cascade
+    if _face_cascade is None:
+        _face_cascade = cv2.CascadeClassifier(cv2.data.haarcascades + "haarcascade_frontalface_default.xml")
+    return _face_cascade
+
+
+async def _send_face(jpeg_bytes: bytes, n: int):
+    chats = load_chats()
+    caption = f"👤 {n} ta yuz aniqlandi! ({datetime.now():%H:%M:%S})"
+    for cid in chats:
+        try:
+            await bot.send_photo(cid, BufferedInputFile(jpeg_bytes, "face.jpg"), caption=caption)
+        except Exception as e:
+            print(f"Yuz rasmini yuborishda xato: {e}")
+
+
+def _face_worker(loop, flag):
+    cap = cv2.VideoCapture(0, cv2.CAP_DSHOW)
+    if not cap.isOpened():
+        asyncio.run_coroutine_threadsafe(_notify_face_error(loop), loop)
+        return
+    cascade = _get_cascade()
+    last_sent = 0.0
+    try:
+        while flag():
+            ret, frame = cap.read()
+            if not ret:
+                time.sleep(0.5)
+                continue
+            gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
+            faces = cascade.detectMultiScale(gray, scaleFactor=1.1, minNeighbors=5, minSize=(80, 80))
+            if len(faces) > 0 and (time.time() - last_sent) > FACE_COOLDOWN_SECONDS:
+                last_sent = time.time()
+                for (x, y, w, h) in faces:
+                    cv2.rectangle(frame, (x, y), (x + w, y + h), (0, 255, 0), 2)
+                ok, buf = cv2.imencode(".jpg", frame)
+                if ok:
+                    asyncio.run_coroutine_threadsafe(_send_face(buf.tobytes(), len(faces)), loop)
+            time.sleep(0.2)
+    finally:
+        cap.release()
+
+
+async def _notify_face_error(loop):
+    chats = load_chats()
+    for cid in chats:
+        try:
+            await bot.send_message(cid, "❌ Kamera ochilmadi (band yoki mavjud emas).")
+        except Exception:
+            pass
+
+
+@dp.message(Command("watchface"))
+async def on_watchface(message: Message):
+    if _face["on"]:
+        await message.answer("📷 Yuz kuzatuvi allaqachon yoqilgan. To'xtatish: /stopface")
+        return
+    _face["on"] = True
+    _face["thread"] = threading.Thread(
+        target=_face_worker, args=(asyncio.get_running_loop(), lambda: _face["on"]), daemon=True
+    )
+    _face["thread"].start()
+    await message.answer(
+        "📷 Yuz kuzatuvi yoqildi. Kamera oldida yuz ko'ringanda rasm yuboraman.\n"
+        f"(Har {FACE_COOLDOWN_SECONDS}s da bir marta) To'xtatish: /stopface"
+    )
+
+
+@dp.message(Command("stopface"))
+async def on_stopface(message: Message):
+    if not _face["on"]:
+        await message.answer("Yuz kuzatuvi yoqilmagan. Yoqish: /watchface")
+        return
+    _face["on"] = False
+    await message.answer("📷 Yuz kuzatuvi o'chirildi.")
+
+
+# ===== DVR: doimiy yozib borish (oxirgi 10 daqiqa) =====
+DVR_DIR = BASE_DIR / "dvr"
+DVR_FPS = 8
+DVR_MAX_WIDTH = 1280
+DVR_SEGMENT_SECONDS = 30
+DVR_KEEP_SECONDS = 11 * 60
+_dvr = {"on": False, "thread": None}
+
+
+def _dvr_cleanup():
+    now = time.time()
+    for f in DVR_DIR.glob("seg_*.mp4"):
+        try:
+            if now - int(f.stem.split("_")[1]) > DVR_KEEP_SECONDS:
+                f.unlink()
+        except (ValueError, OSError, IndexError):
+            pass
+
+
+def _dvr_worker(flag):
+    DVR_DIR.mkdir(exist_ok=True)
+    ow, oh = ImageGrab.grab().size
+    if ow > DVR_MAX_WIDTH:
+        sc = DVR_MAX_WIDTH / ow
+        W, H = DVR_MAX_WIDTH, int(oh * sc)
+    else:
+        W, H = ow, oh
+    W -= W % 2
+    H -= H % 2
+    interval = 1.0 / DVR_FPS
+    while flag():
+        seg_start = time.time()
+        path = str(DVR_DIR / f"seg_{int(seg_start)}.mp4")
+        try:
+            writer = imageio.get_writer(
+                path, fps=DVR_FPS, codec="libx264", quality=5,
+                macro_block_size=None, output_params=["-preset", "ultrafast"],
+            )
+        except Exception as e:
+            print(f"DVR writer xato: {e}")
+            time.sleep(2)
+            continue
+        try:
+            while flag() and (time.time() - seg_start) < DVR_SEGMENT_SECONDS:
+                t0 = time.time()
+                frame = np.array(ImageGrab.grab())
+                if (frame.shape[1], frame.shape[0]) != (W, H):
+                    frame = cv2.resize(frame, (W, H))
+                writer.append_data(frame)
+                dt = time.time() - t0
+                if dt < interval:
+                    time.sleep(interval - dt)
+        finally:
+            writer.close()
+        _dvr_cleanup()
+
+
+def _dvr_compile(minutes: int = 10):
+    now = time.time()
+    cutoff = now - minutes * 60 - DVR_SEGMENT_SECONDS
+    segs = []
+    for f in DVR_DIR.glob("seg_*.mp4"):
+        try:
+            ts = int(f.stem.split("_")[1])
+            if ts >= cutoff:
+                segs.append((ts, f))
+        except (ValueError, IndexError):
+            pass
+    segs.sort()
+    if not segs:
+        return None
+    out = str(BASE_DIR / f"lastrec_{int(now)}.mp4")
+    list_path = str(DVR_DIR / "concat_list.txt")
+    with open(list_path, "w", encoding="utf-8") as lf:
+        for _, f in segs:
+            lf.write(f"file '{f.as_posix()}'\n")
+    try:
+        subprocess.run(
+            [imageio_ffmpeg.get_ffmpeg_exe(), "-y", "-f", "concat", "-safe", "0",
+             "-i", list_path, "-c", "copy", out],
+            capture_output=True, timeout=120,
+        )
+        if os.path.exists(out) and os.path.getsize(out) > 0:
+            return out
+    except Exception as e:
+        print(f"DVR concat xato: {e}")
+    return None
+
+
+def _dvr_start():
+    if _dvr["on"]:
+        return
+    _dvr["on"] = True
+    _dvr["thread"] = threading.Thread(target=_dvr_worker, args=(lambda: _dvr["on"],), daemon=True)
+    _dvr["thread"].start()
+
+
+@dp.message(Command("lastrec"))
+async def on_lastrec(message: Message, command: CommandObject):
+    if not _dvr["on"]:
+        await message.answer("DVR o'chirilgan. Yoqish: /dvr")
+        return
+    mins = 10
+    if command.args:
+        try:
+            mins = max(1, min(10, int(command.args.strip())))
+        except ValueError:
+            pass
+    await message.answer(f"⏳ Oxirgi {mins} daqiqa tayyorlanmoqda...")
+    out = await asyncio.get_running_loop().run_in_executor(None, _dvr_compile, mins)
+    if not out:
+        await message.answer("Hali yozuv yetarli emas (DVR yaqinda yoqilgan, bir oz kuting).")
+        return
+    try:
+        size = os.path.getsize(out)
+        if size > MAX_TELEGRAM_FILE_BYTES:
+            await message.answer(f"⚠️ Video {size // (1024**2)}MB — 50MB dan katta. Kamroq: `/lastrec 5`", parse_mode="Markdown")
+        else:
+            await message.answer_video(FSInputFile(out), caption=f"🎥 Oxirgi {mins} daqiqa (DVR)")
+    finally:
+        try:
+            os.remove(out)
+        except OSError:
+            pass
+
+
+@dp.message(Command("dvr"))
+async def on_dvr(message: Message):
+    if _dvr["on"]:
+        _dvr["on"] = False
+        await message.answer("⏹ DVR o'chirildi (doimiy yozish to'xtatildi).")
+    else:
+        _dvr_start()
+        await message.answer(
+            "🔴 DVR yoqildi — ekran doimiy yozib borilmoqda.\n"
+            "Oxirgi 10 daqiqa saqlanadi. Olish: /lastrec (yoki /lastrec 5)"
+        )
+
+
 async def main():
     await set_bot_commands()
     await notify_startup()
+    _dvr_start()
     asyncio.create_task(periodic_broadcast())
     asyncio.create_task(periodic_alerts())
     asyncio.create_task(history_sampler())
