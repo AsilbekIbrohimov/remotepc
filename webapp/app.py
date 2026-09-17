@@ -347,6 +347,9 @@ html,body { height:100%; background:#000; color:#fff; font-family:-apple-system,
 .loading { animation:pulse 1.5s infinite; } .error{ color:#f55; }
 @keyframes pulse { 0%,100%{opacity:.5} 50%{opacity:1} }
 #ztoggle { position:absolute; right:8px; top:8px; width:38px; height:38px; border-radius:50%; border:none; background:rgba(0,0,0,0.55); color:#fff; font-size:20px; z-index:21; }
+#fullbtn { position:absolute; right:52px; top:8px; width:38px; height:38px; border-radius:50%; border:none; background:rgba(0,0,0,0.55); color:#fff; font-size:18px; z-index:21; }
+#fullbtn.active { background:#2fbf60; box-shadow:0 0 0 2px #2fbf60; }
+#fsbtn { position:absolute; right:96px; top:8px; width:38px; height:38px; border-radius:50%; border:none; background:rgba(0,0,0,0.55); color:#fff; font-size:18px; z-index:21; }
 #zoomctl { position:absolute; right:8px; top:52px; display:flex; flex-direction:column; gap:6px; z-index:20; }
 #zoomctl.collapsed { display:none; }
 #zoomctl button, #gear { width:38px; height:38px; border-radius:50%; border:none; background:rgba(0,0,0,0.55); color:#fff; font-size:18px; font-weight:bold; }
@@ -413,6 +416,8 @@ html,body { height:100%; background:#000; color:#fff; font-family:-apple-system,
     <div id="fps">— FPS</div>
     <div id="status" class="loading">⏳ Ulanmoqda...</div>
     <button id="ztoggle">⌄</button>
+    <button id="fullbtn" title="To'liq boshqaruv (AnyDesk rejimi)">🖥️</button>
+    <button id="fsbtn" title="Butun ekran">⛶</button>
     <div id="zoomctl" class="collapsed">
       <button id="gear">⚙</button>
       <button id="zin">+</button>
@@ -532,6 +537,7 @@ var fpsEl = document.getElementById('fps');
 function api(qs) { return fetch('/api/control?user_id=' + userId + '&' + qs, { headers: HEADERS }).catch(function(){}); }
 
 var ws=null, wsReady=false;
+var FULL=false;
 function ctrl(obj){
   if(wsReady){ try{ ws.send(JSON.stringify(obj)); return; }catch(e){} }
   var p='action='+obj.a;
@@ -643,6 +649,7 @@ var pointers={}, startDist=0, maxPtr=0, downX=0,downY=0, moved=0, downT=0, lastX
 function isCtrl(t){ return t.closest('button,input,#panel'); }
 videoEl.addEventListener('pointerdown',function(e){
   if(isCtrl(e.target))return;
+  if(FULL && e.pointerType!=='touch') return;  // to'liq rejimda sichqoncha alohida ishlaydi
   // sozlama paneli ochiq bo'lsa, videoga bosilganda yopiladi (klik yuborilmaydi)
   if(panel && panel.style.display==='block'){ panel.style.display='none'; return; }
   pointers[e.pointerId]={x:e.clientX,y:e.clientY};
@@ -672,7 +679,7 @@ function endPtr(e){
 }
 videoEl.addEventListener('pointerup',endPtr);
 videoEl.addEventListener('pointercancel',endPtr);
-videoEl.addEventListener('wheel',function(e){ e.preventDefault(); zoomAt(e.clientX,e.clientY,e.deltaY<0?1.15:1/1.15); },{passive:false});
+videoEl.addEventListener('wheel',function(e){ e.preventDefault(); if(FULL){ ctrl({a:'scroll',amount:e.deltaY<0?120:-120}); return; } zoomAt(e.clientX,e.clientY,e.deltaY<0?1.15:1/1.15); },{passive:false});
 
 // ===== WEBSOCKET (past kechikishli boshqaruv) =====
 function wsConnect(){
@@ -887,6 +894,91 @@ document.getElementById('fmUp').onclick=function(){
   if(par==='__drives__'||par==='') fmLoad('');
   else fmLoad(par);
 };
+
+// ===== TO'LIQ REMOTE (AnyDesk rejimi) =====
+// Video ustida haqiqiy sichqoncha: harakat=kursor, bosish=klik, g'ildirak=scroll,
+// klaviatura=to'g'ridan-to'g'ri PC ga. Brauzerda ochilganda avtomatik yoqiladi.
+var fullbtn=document.getElementById('fullbtn'), fsbtn=document.getElementById('fsbtn');
+function vmap(e){
+  var r=img.getBoundingClientRect();
+  if(!r.width||!r.height) return null;
+  var fx=(e.clientX-r.left)/r.width, fy=(e.clientY-r.top)/r.height;
+  if(fx<0||fx>1||fy<0||fy>1) return null;
+  return {x:fx.toFixed(4), y:fy.toFixed(4)};
+}
+function btnName(b){ return b===2?'right':(b===1?'middle':'left'); }
+var lastMove=0;
+videoEl.addEventListener('mousemove',function(e){
+  if(!FULL) return;
+  var now=Date.now(); if(now-lastMove<30) return; lastMove=now;
+  var m=vmap(e); if(m) ctrl({a:'move',x:m.x,y:m.y});
+});
+videoEl.addEventListener('mousedown',function(e){
+  if(!FULL) return;
+  if(isCtrl(e.target)) return;
+  e.preventDefault();
+  var m=vmap(e); if(m) ctrl({a:'move',x:m.x,y:m.y});
+  ctrl({a:'down',btn:btnName(e.button)});
+});
+window.addEventListener('mouseup',function(e){
+  if(!FULL) return;
+  ctrl({a:'up',btn:btnName(e.button)});
+});
+videoEl.addEventListener('contextmenu',function(e){ if(FULL) e.preventDefault(); });
+videoEl.addEventListener('dblclick',function(e){ if(FULL) e.preventDefault(); });
+
+// Fizik klaviatura → PC (faqat FULL yoniq va input-ga yozilmayotgan bo'lsa)
+var KMAP={'Enter':'enter','Backspace':'backspace','Tab':'tab','Escape':'esc',
+  'ArrowUp':'up','ArrowDown':'down','ArrowLeft':'left','ArrowRight':'right',
+  'Delete':'delete',' ':'space','Home':'home','End':'end','PageUp':'pageup','PageDown':'pagedown'};
+window.addEventListener('keydown',function(e){
+  if(!FULL) return;
+  var tag=e.target&&e.target.tagName;
+  if(tag==='INPUT'||tag==='TEXTAREA') return;
+  var mods=[];
+  if(e.ctrlKey)mods.push('ctrl'); if(e.altKey)mods.push('alt');
+  if(e.shiftKey)mods.push('shift'); if(e.metaKey)mods.push('win');
+  var k=e.key;
+  // faqat modifikator bosilgan bo'lsa — hali kutamiz
+  if(k==='Control'||k==='Alt'||k==='Shift'||k==='Meta') return;
+  e.preventDefault();
+  if(KMAP[k]){
+    if(mods.length) ctrl({a:'combo',keys:mods.concat([KMAP[k]]).join('+')});
+    else ctrl({a:'special',key:KMAP[k]});
+    return;
+  }
+  if(k.length===1){
+    // Ctrl/Alt/Win yorliqlari (masalan Ctrl+C) → combo, aks holda oddiy yozuv
+    var hasCmd = e.ctrlKey||e.altKey||e.metaKey;
+    if(hasCmd) ctrl({a:'combo',keys:mods.concat([k.toLowerCase()]).join('+')});
+    else ctrl({a:'type',text:k});
+    return;
+  }
+});
+
+function setFull(on){
+  FULL=on;
+  fullbtn.classList.toggle('active',on);
+  fullbtn.title = on ? 'To\\'liq boshqaruv: YONIQ (bosib o\\'chiring)' : 'To\\'liq boshqaruv (AnyDesk rejimi)';
+  videoEl.style.cursor = on ? 'crosshair' : '';
+  if(on){ resetZoom(); fpsEl.textContent='🖥️ To\\'liq boshqaruv YONIQ'; }
+}
+fullbtn.onclick=function(){ setFull(!FULL); };
+
+// Fullscreen
+fsbtn.onclick=function(){
+  try{
+    if(!document.fullscreenElement){ (document.getElementById('app')||document.body).requestFullscreen(); }
+    else{ document.exitFullscreen(); }
+  }catch(e){}
+};
+
+// Brauzerda (Telegram emas, sensorli ekran emas) — avtomatik to'liq rejim
+(function(){
+  var isTouch = ('ontouchstart' in window) || (navigator.maxTouchPoints>0);
+  var inTelegram = !!(tg && tg.initData);
+  if(!isTouch && !inTelegram){ setTimeout(function(){ setFull(true); }, 400); }
+})();
 </script>
 </body>
 </html>"""

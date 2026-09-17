@@ -76,6 +76,18 @@ def _build_watch_folders() -> list[Path]:
             if f.exists() and rp not in seen:
                 seen.add(rp)
                 folders.append(f)
+    # 1C hisobot jo'natmalari papkasi (Рассылки отчётов shu yerga saqlaydi)
+    extra = os.environ.get("ONEC_REPORTS_DIR")
+    if extra:
+        p = Path(extra)
+        try:
+            p.mkdir(parents=True, exist_ok=True)
+            rp = p.resolve()
+            if rp not in seen:
+                seen.add(rp)
+                folders.append(p)
+        except OSError:
+            pass
     return folders
 
 
@@ -93,6 +105,52 @@ bot = Bot(token=BOT_TOKEN)
 dp = Dispatcher()
 dp.message.filter(F.from_user.id == OWNER_ID)
 dp.callback_query.filter(F.from_user.id == OWNER_ID)
+
+# ── Buyruq log ─────────────────────────────────────────────
+# Bot orqali kelgan har bir buyruq shu faylga yoziladi. Shunday qilib bu
+# sessiya (va /ai) foydalanuvchi bot orqali nima qilganini doim biladi.
+CMD_LOG = BASE_DIR / "bot_activity.log"
+
+
+def _log_command(text: str, kind: str = "cmd") -> None:
+    try:
+        ts = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        with open(CMD_LOG, "a", encoding="utf-8") as f:
+            f.write(f"{ts}\t{kind}\t{text}\n")
+    except Exception:
+        pass
+
+
+def _recent_activity(n: int = 20) -> str:
+    try:
+        lines = CMD_LOG.read_text(encoding="utf-8", errors="replace").splitlines()
+    except Exception:
+        return ""
+    return "\n".join(lines[-n:])
+
+
+async def _log_message_mw(handler, event, data):
+    try:
+        txt = (getattr(event, "text", None) or "").strip()
+        if txt:
+            _log_command(txt, "cmd")
+    except Exception:
+        pass
+    return await handler(event, data)
+
+
+async def _log_callback_mw(handler, event, data):
+    try:
+        d = (getattr(event, "data", None) or "").strip()
+        if d:
+            _log_command(d, "btn")
+    except Exception:
+        pass
+    return await handler(event, data)
+
+
+dp.message.outer_middleware(_log_message_mw)
+dp.callback_query.outer_middleware(_log_callback_mw)
 
 def get_main_keyboard() -> ReplyKeyboardMarkup:
     rows = []
@@ -139,6 +197,7 @@ def menu_media() -> InlineKeyboardMarkup:
 
 def menu_tools() -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(inline_keyboard=[
+        [_btn("🤖 AI yordamchi", "menu:hint:ai")],
         [_btn("🌐 URL ochish", "menu:hint:open"), _btn("▶️ Dastur", "menu:hint:run")],
         [_btn("📋 Clipboard olish", "menu:act:clip"), _btn("📁 Fayl olish", "menu:hint:getfile")],
         [_btn("◀ Orqaga", "menu:home")],
@@ -554,6 +613,7 @@ async def on_menu_hub(message: Message):
 
 
 _MENU_HINTS = {
+    "ai": "🤖 AI yordamchi — kompyuterda vazifa bajaradi:\n`/ai eng katta 5 faylni top`\n`/ai qaysi dastur ko'p RAM ishlatyapti`",
     "open": "🌐 URL ochish uchun:\n`/open google.com`",
     "run": "▶️ Dastur ishga tushirish:\n`/run notepad`",
     "getfile": "📁 Faylni olish uchun:\n`/getfile C:\\\\yo'l\\\\fayl.txt`",
@@ -899,6 +959,7 @@ async def set_bot_commands():
         BotCommand(command="stop_live", description="Live kuzatishni to'xtatish"),
         BotCommand(command="record", description="Ekranni videoga yozib olishni boshlash"),
         BotCommand(command="stop", description="Ekran yozuvini to'xtatib, videoni yuborish"),
+        BotCommand(command="ai", description="AI yordamchi — shu chat konteksti bilan vazifa bajaradi"),
         BotCommand(command="open", description="Brauzerda URL ochish (/open google.com)"),
         BotCommand(command="run", description="Dastur ishga tushirish (/run notepad)"),
         BotCommand(command="clip", description="Kompyuter clipboard matnini olish"),
@@ -917,6 +978,183 @@ async def notify_startup():
             await bot.send_message(chat_id, "🟢 Kompyuter yoqildi / tizimga kirildi. Bot ishga tushdi.")
         except Exception as e:
             print(f"Xabar yuborishda xato ({chat_id}): {e}")
+
+
+def _find_claude_exe():
+    ext = Path.home() / ".vscode" / "extensions"
+    matches = sorted(ext.glob("anthropic.claude-code-*/resources/native-binary/claude.exe"))
+    return str(matches[-1]) if matches else None
+
+
+CLAUDE_EXE = _find_claude_exe()
+_ai_busy = False
+
+
+def _latest_session_id():
+    proj = Path.home() / ".claude" / "projects"
+    jsonls = []
+    for d in list(proj.glob("*Documents-remote")) + list(proj.glob("*remote")):
+        jsonls += list(d.glob("*.jsonl"))
+    if not jsonls:
+        return None
+    return max(jsonls, key=lambda f: f.stat().st_mtime).stem
+
+
+def _run_claude(task: str) -> str:
+    args = [CLAUDE_EXE, "-p", task, "--output-format", "text", "--dangerously-skip-permissions"]
+    sid = _latest_session_id()
+    if sid:
+        # Joriy VS Code chatini fork qilamiz — shu suhbat konteksti bor, jonli sessiya buzilmaydi
+        args += ["--resume", sid, "--fork-session"]
+    try:
+        r = subprocess.run(
+            args, capture_output=True, encoding="utf-8", errors="replace",
+            timeout=900, cwd=str(BASE_DIR),
+        )
+        out = (r.stdout or "").strip()
+        if not out and r.stderr:
+            out = "⚠️ " + r.stderr.strip()[:1500]
+        return out or "(natija bo'sh)"
+    except subprocess.TimeoutExpired:
+        return "⏱️ Timeout (10 daqiqa) — vazifa juda uzoq davom etdi."
+    except Exception as e:
+        return f"❌ Xato: {e}"
+
+
+def _summarize_tool(name, inp):
+    inp = inp or {}
+    n = str(name or "")
+    if n == "Bash":
+        return "🔧 Bash: " + str(inp.get("command", ""))[:90]
+    if n == "Read":
+        return "📖 Read: " + str(inp.get("file_path", ""))
+    if n in ("Edit", "Write", "NotebookEdit"):
+        return "✏️ " + n + ": " + str(inp.get("file_path", ""))
+    if n == "Grep":
+        return "🔍 Grep: " + str(inp.get("pattern", ""))[:70]
+    if n == "Glob":
+        return "🔍 Glob: " + str(inp.get("pattern", ""))[:70]
+    if n == "TodoWrite":
+        return "📝 Reja yangilandi"
+    if n in ("WebFetch", "WebSearch"):
+        return "🌐 " + n + ": " + str(inp.get("url") or inp.get("query", ""))[:70]
+    return "🔧 " + (n or "tool")
+
+
+async def _run_claude_stream(message: Message, task: str):
+    recent = _recent_activity(15)
+    if recent:
+        task = (
+            "[Bot orqali kelgan oxirgi buyruqlar jurnali — kerak bo'lsa foydalaning]\n"
+            f"{recent}\n\n[Foydalanuvchi vazifasi]\n{task}"
+        )
+    args = [CLAUDE_EXE, "-p", task, "--output-format", "stream-json", "--verbose",
+            "--dangerously-skip-permissions"]
+    sid = _latest_session_id()
+    if sid:
+        args += ["--resume", sid, "--fork-session"]
+
+    progress = await message.answer("🤖 Boshlanmoqda...")
+    log = []
+    final = ""
+    last_assistant_text = [""]
+    last_edit = [0.0]
+    last_text = [""]
+
+    async def flush(force=False):
+        now = time.time()
+        if not force and now - last_edit[0] < 2.5:
+            return
+        text = ("🤖 Ishlayapman...\n\n" + "\n".join(log[-16:]))[:4000]
+        if text == last_text[0]:
+            return
+        last_text[0] = text
+        last_edit[0] = now
+        try:
+            await progress.edit_text(text)
+        except Exception:
+            pass
+
+    try:
+        proc = await asyncio.create_subprocess_exec(
+            *args, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.DEVNULL,
+            cwd=str(BASE_DIR),
+        )
+    except Exception as e:
+        await progress.edit_text(f"❌ Ishga tushmadi: {e}")
+        return
+
+    try:
+        while True:
+            line = await proc.stdout.readline()
+            if not line:
+                break
+            try:
+                ev = json.loads(line.decode("utf-8", "replace"))
+            except Exception:
+                continue
+            t = ev.get("type")
+            if t == "assistant":
+                for block in ev.get("message", {}).get("content", []):
+                    bt = block.get("type")
+                    if bt == "tool_use":
+                        log.append(_summarize_tool(block.get("name"), block.get("input")))
+                        await flush()
+                    elif bt == "text":
+                        txt = (block.get("text") or "").strip()
+                        if txt:
+                            last_assistant_text[0] = txt
+                            log.append("💬 " + txt[:140])
+                            await flush()
+            elif t == "result":
+                final = ev.get("result", "") or final
+        await proc.wait()
+    except Exception as e:
+        log.append("⚠️ " + str(e))
+
+    await flush(force=True)
+    if not final:
+        # Xulosa matni bo'lmasa — oxirgi matnli javob yoki bajarilgan amallar ro'yxati
+        if last_assistant_text[0]:
+            final = last_assistant_text[0]
+        elif log:
+            final = "✅ Bajarilgan amallar:\n\n" + "\n".join(log[-20:])
+        else:
+            final = "✅ Tugadi (natija bo'sh)."
+    try:
+        await progress.edit_text("✅ Tugadi! Natija:")
+    except Exception:
+        pass
+    for i in range(0, len(final), 4000):
+        await message.answer(final[i:i + 4000])
+
+
+@dp.message(Command("ai"))
+async def on_ai(message: Message, command: CommandObject):
+    global _ai_busy
+    task = (command.args or "").strip()
+    if not task:
+        await message.answer(
+            "🤖 *AI yordamchi* — kompyuterda vazifa bajaraman.\n\n"
+            "Foydalanish: `/ai <vazifa>`\n"
+            "Masalan:\n"
+            "`/ai eng katta 5 faylni top`\n"
+            "`/ai qaysi dastur ko'p RAM ishlatyapti`\n"
+            "`/ai bugungi rasmlarni sanab ber`",
+            parse_mode="Markdown",
+        )
+        return
+    if not CLAUDE_EXE or not os.path.exists(CLAUDE_EXE):
+        await message.answer("❌ Claude CLI topilmadi.")
+        return
+    if _ai_busy:
+        await message.answer("⏳ AI hozir band — oldingi vazifa tugashini kuting.")
+        return
+    _ai_busy = True
+    try:
+        await _run_claude_stream(message, task)
+    finally:
+        _ai_busy = False
 
 
 @dp.message(Command("open"))
@@ -1116,8 +1354,13 @@ def _dvr_worker(flag):
                 dt = time.time() - t0
                 if dt < interval:
                     time.sleep(interval - dt)
+        except (OSError, ValueError, RuntimeError) as e:
+            print(f"DVR yozish xatosi: {e}")
         finally:
-            writer.close()
+            try:
+                writer.close()
+            except Exception:
+                pass
         _dvr_cleanup()
 
 
