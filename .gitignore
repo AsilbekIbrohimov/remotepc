@@ -21,6 +21,9 @@ ngrok.exe
 ngrok.zip
 cloudflared.exe
 
+# Lokal Telegram Bot API server (binary + data + log)
+botapi/
+
 # Python
 __pycache__/
 *.pyc

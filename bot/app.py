@@ -20,6 +20,8 @@ matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 import psutil
 from aiogram import Bot, Dispatcher, F
+from aiogram.client.session.aiohttp import AiohttpSession
+from aiogram.client.telegram import TelegramAPIServer
 from aiogram.filters import Command, CommandObject, CommandStart
 from aiogram.types import (
     BotCommand,
@@ -55,7 +57,10 @@ HISTORY_SAMPLE_SECONDS = 60
 HISTORY_MAX_SAMPLES = 6 * 60  # 6 soat
 LOCK_POLL_SECONDS = 10
 DESKTOP_SWITCHDESKTOP = 0x0100
-MAX_TELEGRAM_FILE_BYTES = 50 * 1024 * 1024
+# Lokal Bot API server yoqilgan bo'lsa fayl chegarasi 2000MB, aks holda 50MB
+USE_LOCAL_BOT_API = os.environ.get("USE_LOCAL_BOT_API", "").strip() in ("1", "true", "yes")
+LOCAL_BOT_API_URL = os.environ.get("LOCAL_BOT_API_URL", "http://127.0.0.1:8081").strip()
+MAX_TELEGRAM_FILE_BYTES = (2000 if USE_LOCAL_BOT_API else 50) * 1024 * 1024
 
 def _build_watch_folders() -> list[Path]:
     names = ["Desktop", "Documents", "Pictures", "Videos", "Music"]
@@ -101,7 +106,12 @@ EXCLUDED_DIR_NAMES = {
 EXCLUDED_EXTENSIONS = {".tmp", ".crdownload", ".part", ".partial", ".download", ".session-journal"}
 NEW_FILE_SETTLE_SECONDS = 2
 
-bot = Bot(token=BOT_TOKEN)
+if USE_LOCAL_BOT_API:
+    # Lokal Bot API server orqali — 2GB gacha fayl yuborish mumkin
+    _session = AiohttpSession(api=TelegramAPIServer.from_base(LOCAL_BOT_API_URL, is_local=True))
+    bot = Bot(token=BOT_TOKEN, session=_session)
+else:
+    bot = Bot(token=BOT_TOKEN)
 dp = Dispatcher()
 dp.message.filter(F.from_user.id == OWNER_ID)
 dp.callback_query.filter(F.from_user.id == OWNER_ID)
