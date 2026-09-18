@@ -1,4 +1,6 @@
-$exe = "C:\Users\Asilbek\OneDrive\Documents\remote\ngrok.exe"
+$dir = "C:\Users\Asilbek\OneDrive\Documents\remote"
+$exe = "$dir\ngrok.exe"
+$domain = "agent-habitat-launch.ngrok-free.dev"
 while ($true) {
   $ok = $false
   try {
@@ -8,7 +10,12 @@ while ($true) {
   if (-not $ok) {
     Get-Process -Name ngrok -ErrorAction SilentlyContinue | Stop-Process -Force
     Start-Sleep -Seconds 3
-    Start-Process -FilePath $exe -ArgumentList "http","8765","--region=in" -WindowStyle Hidden
+    # Defender ba'zan ngrok.exe ni karantinga oladi — yo'q bo'lsa zip'dan tiklaymiz
+    if (-not (Test-Path $exe)) {
+      try { Expand-Archive -Path "$dir\ngrok.zip" -DestinationPath $dir -Force } catch {}
+    }
+    # Static domen bilan ishga tushiramiz (aks holda tasodifiy URL bo'ladi)
+    Start-Process -FilePath $exe -ArgumentList "http","--url=$domain","8765" -WindowStyle Hidden
     Start-Sleep -Seconds 8
   }
   Start-Sleep -Seconds 10

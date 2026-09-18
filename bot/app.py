@@ -959,7 +959,8 @@ async def set_bot_commands():
         BotCommand(command="stop_live", description="Live kuzatishni to'xtatish"),
         BotCommand(command="record", description="Ekranni videoga yozib olishni boshlash"),
         BotCommand(command="stop", description="Ekran yozuvini to'xtatib, videoni yuborish"),
-        BotCommand(command="ai", description="AI yordamchi — shu chat konteksti bilan vazifa bajaradi"),
+        BotCommand(command="ai", description="AI yordamchi — kompyuterda vazifa bajaradi"),
+        BotCommand(command="ai_reset", description="AI suhbatini tozalash (yangi sessiya)"),
         BotCommand(command="open", description="Brauzerda URL ochish (/open google.com)"),
         BotCommand(command="run", description="Dastur ishga tushirish (/run notepad)"),
         BotCommand(command="clip", description="Kompyuter clipboard matnini olish"),
@@ -998,6 +999,29 @@ def _latest_session_id():
     if not jsonls:
         return None
     return max(jsonls, key=lambda f: f.stat().st_mtime).stem
+
+
+# ── Dedicated AI sessiya ─────────────────────────────────────
+# /ai uchun alohida, barqaror sessiya. Har safar ulkan VS Code chatini
+# fork qilish (8.8 MB!) sekin/bo'sh natija berardi. Buning o'rniga bitta
+# o'z sessiyamizni yaratib, keyingi so'rovlarda o'shani davom ettiramiz.
+AI_SESSION_FILE = BASE_DIR / ".ai_session"
+
+
+def _load_ai_session():
+    try:
+        sid = AI_SESSION_FILE.read_text(encoding="utf-8").strip()
+        return sid or None
+    except Exception:
+        return None
+
+
+def _save_ai_session(sid: str) -> None:
+    try:
+        if sid:
+            AI_SESSION_FILE.write_text(sid, encoding="utf-8")
+    except Exception:
+        pass
 
 
 def _run_claude(task: str) -> str:
@@ -1050,13 +1074,16 @@ async def _run_claude_stream(message: Message, task: str):
         )
     args = [CLAUDE_EXE, "-p", task, "--output-format", "stream-json", "--verbose",
             "--dangerously-skip-permissions"]
-    sid = _latest_session_id()
-    if sid:
-        args += ["--resume", sid, "--fork-session"]
+    # Ulkan VS Code chatini fork qilmaymiz — o'zimizning barqaror sessiyamiz.
+    ai_sid = _load_ai_session()
+    if ai_sid:
+        args += ["--resume", ai_sid]  # o'sha dedicated chatni davom ettiramiz (fork emas)
 
     progress = await message.answer("🤖 Boshlanmoqda...")
     log = []
     final = ""
+    is_error = [False]
+    new_sid = [""]
     last_assistant_text = [""]
     last_edit = [0.0]
     last_text = [""]
@@ -1077,12 +1104,27 @@ async def _run_claude_stream(message: Message, task: str):
 
     try:
         proc = await asyncio.create_subprocess_exec(
-            *args, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.DEVNULL,
+            *args, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE,
             cwd=str(BASE_DIR),
         )
     except Exception as e:
         await progress.edit_text(f"❌ Ishga tushmadi: {e}")
         return
+
+    # stderr ni alohida oqimda yig'amiz (pipe to'lib qolib deadlock bo'lmasin)
+    stderr_buf = []
+
+    async def _drain_stderr():
+        try:
+            while True:
+                ln = await proc.stderr.readline()
+                if not ln:
+                    break
+                stderr_buf.append(ln.decode("utf-8", "replace"))
+        except Exception:
+            pass
+
+    stderr_task = asyncio.create_task(_drain_stderr())
 
     try:
         while True:
@@ -1093,6 +1135,8 @@ async def _run_claude_stream(message: Message, task: str):
                 ev = json.loads(line.decode("utf-8", "replace"))
             except Exception:
                 continue
+            if ev.get("session_id"):
+                new_sid[0] = ev["session_id"]
             t = ev.get("type")
             if t == "assistant":
                 for block in ev.get("message", {}).get("content", []):
@@ -1107,26 +1151,50 @@ async def _run_claude_stream(message: Message, task: str):
                             log.append("💬 " + txt[:140])
                             await flush()
             elif t == "result":
+                if ev.get("is_error") or ev.get("subtype") not in (None, "success"):
+                    is_error[0] = True
                 final = ev.get("result", "") or final
         await proc.wait()
     except Exception as e:
         log.append("⚠️ " + str(e))
+    finally:
+        try:
+            await asyncio.wait_for(stderr_task, timeout=5)
+        except Exception:
+            stderr_task.cancel()
 
     await flush(force=True)
-    if not final:
-        # Xulosa matni bo'lmasa — oxirgi matnli javob yoki bajarilgan amallar ro'yxati
-        if last_assistant_text[0]:
-            final = last_assistant_text[0]
-        elif log:
-            final = "✅ Bajarilgan amallar:\n\n" + "\n".join(log[-20:])
-        else:
-            final = "✅ Tugadi (natija bo'sh)."
+
+    # Yangi/dedicated sessiyani saqlab qolamiz (keyingi /ai davom etsin)
+    if new_sid[0] and new_sid[0] != ai_sid:
+        _save_ai_session(new_sid[0])
+
+    err_tail = ("".join(stderr_buf)).strip()
+
+    # Natijani ishonchli tanlaymiz — endi hech qachon "sabab'siz bo'sh" bo'lmaydi
+    if final and not is_error[0]:
+        result_text = final
+    elif last_assistant_text[0]:
+        result_text = last_assistant_text[0]
+    elif log:
+        result_text = "✅ Bajarilgan amallar:\n\n" + "\n".join(log[-20:])
+    elif err_tail:
+        result_text = "⚠️ AI xatosi:\n\n" + err_tail[-1500:]
+    else:
+        rc = proc.returncode
+        result_text = (
+            f"⚠️ Natija bo'sh (exit={rc}). "
+            "Sessiya buzilган bo'lishi mumkin — `/ai_reset` bilan yangilang."
+        )
+    if is_error[0] and err_tail and err_tail[-800:] not in result_text:
+        result_text += "\n\n⚠️ " + err_tail[-800:]
+
     try:
         await progress.edit_text("✅ Tugadi! Natija:")
     except Exception:
         pass
-    for i in range(0, len(final), 4000):
-        await message.answer(final[i:i + 4000])
+    for i in range(0, len(result_text), 4000):
+        await message.answer(result_text[i:i + 4000])
 
 
 @dp.message(Command("ai"))
@@ -1155,6 +1223,16 @@ async def on_ai(message: Message, command: CommandObject):
         await _run_claude_stream(message, task)
     finally:
         _ai_busy = False
+
+
+@dp.message(Command("ai_reset"))
+async def on_ai_reset(message: Message):
+    try:
+        if AI_SESSION_FILE.exists():
+            AI_SESSION_FILE.unlink()
+        await message.answer("♻️ AI suhbati tozalandi — keyingi /ai yangi sessiyada boshlanadi.")
+    except Exception as e:
+        await message.answer(f"❌ Tozalab bo'lmadi: {e}")
 
 
 @dp.message(Command("open"))
@@ -1376,6 +1454,10 @@ def _dvr_compile(minutes: int = 10):
         except (ValueError, IndexError):
             pass
     segs.sort()
+    # Ayni damda yozilayotgan (tugallanmagan) oxirgi segmentni chiqarib tashlaymiz —
+    # aks holda ffmpeg uni ocholmay "Invalid data" beradi.
+    if segs and (now - segs[-1][0]) < DVR_SEGMENT_SECONDS:
+        segs = segs[:-1]
     if not segs:
         return None
     out = str(BASE_DIR / f"lastrec_{int(now)}.mp4")

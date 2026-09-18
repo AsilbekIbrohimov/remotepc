@@ -5,6 +5,7 @@
 
 # Bot ma'lumotlari
 subscribed_chats.json
+.ai_session
 
 # Ekran yozuvlari / vaqtinchalik media
 rec_*.mp4
