@@ -183,6 +183,26 @@ def _write_grant(sid: str, status: str) -> None:
         print(f"grant yozish xato: {e}")
 
 
+def _revoke_grant(sid: str) -> None:
+    try:
+        data = json.loads(GRANTS_FILE.read_text("utf-8"))
+    except Exception:
+        return
+    if sid in data:
+        data.pop(sid, None)
+        try:
+            GRANTS_FILE.write_text(json.dumps(data), encoding="utf-8")
+        except Exception:
+            pass
+
+
+def _revoke_all() -> None:
+    try:
+        GRANTS_FILE.write_text("{}", encoding="utf-8")
+    except Exception:
+        pass
+
+
 @dp.callback_query(F.data.startswith("acc:"))
 async def on_access(callback: CallbackQuery):
     parts = callback.data.split(":", 2)
@@ -193,7 +213,19 @@ async def on_access(callback: CallbackQuery):
         _write_grant(sid, "allowed")
         await callback.answer("✅ Ruxsat berildi")
         try:
-            await callback.message.edit_text("✅ Ulanishga ruxsat berildi (1 soat).")
+            kb = InlineKeyboardMarkup(inline_keyboard=[[
+                InlineKeyboardButton(text="🔌 Ulanishni uzish", callback_data=f"acc:x:{sid}")
+            ]])
+            await callback.message.edit_text(
+                "✅ Ulanishga ruxsat berildi (1 soat).\n"
+                "Istalgan vaqt uzishingiz mumkin 👇", reply_markup=kb)
+        except Exception:
+            pass
+    elif act == "x":
+        _revoke_grant(sid)
+        await callback.answer("🔌 Ulanish uzildi")
+        try:
+            await callback.message.edit_text("🔌 Ulanish uzildi.")
         except Exception:
             pass
     else:
@@ -203,6 +235,12 @@ async def on_access(callback: CallbackQuery):
             await callback.message.edit_text("⛔ Ulanish rad etildi.")
         except Exception:
             pass
+
+
+@dp.message(Command("uzish"))
+async def on_uzish(message: Message):
+    _revoke_all()
+    await message.answer("🔌 Barcha masofaviy ulanishlar uzildi.\n(Telegram orqali o'zingiz baribir ochasiz.)")
 
 def get_main_keyboard() -> ReplyKeyboardMarkup:
     rows = []
@@ -1021,6 +1059,7 @@ async def set_bot_commands():
         BotCommand(command="stopface", description="Yuz kuzatuvini to'xtatish"),
         BotCommand(command="lastrec", description="Oxirgi 10 daqiqa ekran yozuvini olish"),
         BotCommand(command="dvr", description="Doimiy yozib borishni yoqish/o'chirish"),
+        BotCommand(command="uzish", description="Barcha masofaviy ulanishlarni uzish"),
     ])
 
 

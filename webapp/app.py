@@ -286,8 +286,14 @@ async def stream_api(request: web.Request) -> web.StreamResponse:
     })
     await resp.prepare(request)
     loop = asyncio.get_event_loop()
+    last_check = time.time()
     try:
         while True:
+            # Har ~2s da ruxsatni qayta tekshiramiz — egasi uzsa oqim darhol to'xtaydi
+            if time.time() - last_check > 2:
+                last_check = time.time()
+                if not _auth_ok(request):
+                    break
             jpeg = await loop.run_in_executor(None, take_jpeg_bytes)
             await resp.write(
                 b"--frame\r\nContent-Type: image/jpeg\r\n"
@@ -363,7 +369,13 @@ async def ws_api(request: web.Request) -> web.WebSocketResponse:
     if not _auth_ok(request):
         await ws.close()
         return ws
+    last_check = time.time()
     async for msg in ws:
+        # Har ~2s da ruxsatni qayta tekshiramiz — egasi uzsa boshqaruv darhol to'xtaydi
+        if time.time() - last_check > 2:
+            last_check = time.time()
+            if not _auth_ok(request):
+                break
         if msg.type == web.WSMsgType.TEXT:
             try:
                 d = json.loads(msg.data)
@@ -372,6 +384,7 @@ async def ws_api(request: web.Request) -> web.WebSocketResponse:
                 pass
         elif msg.type == web.WSMsgType.ERROR:
             break
+    await ws.close()
     return ws
 
 
