@@ -42,3 +42,5 @@ _ul
 
 # Masofadan ulanish ruxsatlari (transient)
 access_grants.json
+
+*.bak
