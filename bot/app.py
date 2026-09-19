@@ -1411,45 +1411,48 @@ def _dvr_cleanup():
 
 def _dvr_worker(flag):
     DVR_DIR.mkdir(exist_ok=True)
-    ow, oh = ImageGrab.grab().size
-    if ow > DVR_MAX_WIDTH:
-        sc = DVR_MAX_WIDTH / ow
-        W, H = DVR_MAX_WIDTH, int(oh * sc)
-    else:
-        W, H = ow, oh
-    W -= W % 2
-    H -= H % 2
     interval = 1.0 / DVR_FPS
+    W = H = None
     while flag():
-        seg_start = time.time()
-        path = str(DVR_DIR / f"seg_{int(seg_start)}.mp4")
         try:
+            # Ekran o'lchamini aniqlaymiz. Boot/qulf paytida ekran tayyor
+            # bo'lmasligi mumkin — o'lchamni None qilib qayta urinamiz (thread o'lmaydi).
+            if W is None:
+                ow, oh = ImageGrab.grab().size
+                if ow > DVR_MAX_WIDTH:
+                    sc = DVR_MAX_WIDTH / ow
+                    W, H = DVR_MAX_WIDTH, int(oh * sc)
+                else:
+                    W, H = ow, oh
+                W -= W % 2
+                H -= H % 2
+            seg_start = time.time()
+            path = str(DVR_DIR / f"seg_{int(seg_start)}.mp4")
             writer = imageio.get_writer(
                 path, fps=DVR_FPS, codec="libx264", quality=5,
                 macro_block_size=None, output_params=["-preset", "ultrafast"],
             )
-        except Exception as e:
-            print(f"DVR writer xato: {e}")
-            time.sleep(2)
-            continue
-        try:
-            while flag() and (time.time() - seg_start) < DVR_SEGMENT_SECONDS:
-                t0 = time.time()
-                frame = np.array(ImageGrab.grab())
-                if (frame.shape[1], frame.shape[0]) != (W, H):
-                    frame = cv2.resize(frame, (W, H))
-                writer.append_data(frame)
-                dt = time.time() - t0
-                if dt < interval:
-                    time.sleep(interval - dt)
-        except (OSError, ValueError, RuntimeError) as e:
-            print(f"DVR yozish xatosi: {e}")
-        finally:
             try:
-                writer.close()
-            except Exception:
-                pass
-        _dvr_cleanup()
+                while flag() and (time.time() - seg_start) < DVR_SEGMENT_SECONDS:
+                    t0 = time.time()
+                    frame = np.array(ImageGrab.grab())
+                    if (frame.shape[1], frame.shape[0]) != (W, H):
+                        frame = cv2.resize(frame, (W, H))
+                    writer.append_data(frame)
+                    dt = time.time() - t0
+                    if dt < interval:
+                        time.sleep(interval - dt)
+            finally:
+                try:
+                    writer.close()
+                except Exception:
+                    pass
+            _dvr_cleanup()
+        except Exception as e:
+            # Har qanday xato — thread o'lmaydi, 3s dan keyin qayta urinadi
+            print(f"DVR worker xatosi (qayta urinilmoqda): {e}")
+            W = H = None
+            time.sleep(3)
 
 
 def _dvr_compile(minutes: int = 10):
@@ -1489,11 +1492,26 @@ def _dvr_compile(minutes: int = 10):
 
 
 def _dvr_start():
-    if _dvr["on"]:
+    # Thread tirik bo'lmasa (o'lgan bo'lsa) qayta ishga tushiramiz
+    t = _dvr.get("thread")
+    if _dvr["on"] and t is not None and t.is_alive():
         return
     _dvr["on"] = True
     _dvr["thread"] = threading.Thread(target=_dvr_worker, args=(lambda: _dvr["on"],), daemon=True)
     _dvr["thread"].start()
+
+
+async def dvr_watchdog():
+    # DVR yoqiq bo'lsa-yu thread o'lgan bo'lsa — avtomatik qayta tiklaydi
+    while True:
+        await asyncio.sleep(60)
+        try:
+            t = _dvr.get("thread")
+            if _dvr["on"] and (t is None or not t.is_alive()):
+                print("DVR watchdog: thread o'lgan, qayta ishga tushirilmoqda")
+                _dvr_start()
+        except Exception:
+            pass
 
 
 @dp.message(Command("lastrec"))
@@ -1546,6 +1564,7 @@ async def main():
     asyncio.create_task(periodic_alerts())
     asyncio.create_task(history_sampler())
     asyncio.create_task(lock_watcher())
+    asyncio.create_task(dvr_watchdog())
     start_file_watcher(asyncio.get_running_loop())
     await dp.start_polling(bot)
 
