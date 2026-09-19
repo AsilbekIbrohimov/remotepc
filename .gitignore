@@ -39,3 +39,6 @@ desktop.ini
 .claude/
 _ul
 *.log
+
+# Masofadan ulanish ruxsatlari (transient)
+access_grants.json

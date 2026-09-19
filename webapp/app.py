@@ -1,10 +1,14 @@
 import asyncio
 import base64
 import ctypes
+import hashlib
+import hmac
 import io
 import json
 import os
+import time
 from pathlib import Path
+from urllib.parse import parse_qsl
 
 import aiohttp
 from aiohttp import web
@@ -17,6 +21,14 @@ load_dotenv(BASE_DIR / ".env")
 OWNER_ID = int(os.environ["TG_OWNER_ID"])
 BOT_TOKEN = os.environ.get("TG_BOT_TOKEN", "").strip().strip("'\"")
 MAX_TG_BYTES = 50 * 1024 * 1024
+
+# Bot API bazasi (lokal server yoqilgan bo'lsa 2GB limit)
+_USE_LOCAL = os.environ.get("USE_LOCAL_BOT_API", "").strip() in ("1", "true", "yes")
+_BOT_API_BASE = (os.environ.get("LOCAL_BOT_API_URL", "http://127.0.0.1:8081").strip()
+                 if _USE_LOCAL else "https://api.telegram.org")
+
+# Bot orqali ruxsat berilgan sessiyalar (bot yozadi, webapp o'qiydi)
+GRANTS_FILE = BASE_DIR / "access_grants.json"
 
 # ===== REMOTE CONTROL (sichqoncha / klaviatura) =====
 _user32 = ctypes.windll.user32
@@ -190,11 +202,46 @@ def take_screenshot_b64() -> str:
     return base64.b64encode(take_jpeg_bytes()).decode()
 
 
-def _auth_ok(request: web.Request) -> bool:
-    try:
-        return int(request.query.get("user_id", "")) == OWNER_ID
-    except ValueError:
+def _valid_telegram_init(init_data: str) -> bool:
+    """Telegram WebApp initData ni HMAC bilan tekshiradi; egasi (OWNER) bo'lsa True."""
+    if not init_data or not BOT_TOKEN:
         return False
+    try:
+        pairs = dict(parse_qsl(init_data, keep_blank_values=True))
+        their_hash = pairs.pop("hash", None)
+        if not their_hash:
+            return False
+        data_check = "\n".join(f"{k}={pairs[k]}" for k in sorted(pairs))
+        secret = hmac.new(b"WebAppData", BOT_TOKEN.encode(), hashlib.sha256).digest()
+        calc = hmac.new(secret, data_check.encode(), hashlib.sha256).hexdigest()
+        if not hmac.compare_digest(calc, their_hash):
+            return False
+        user = json.loads(pairs.get("user", "{}"))
+        return int(user.get("id", 0)) == OWNER_ID
+    except Exception:
+        return False
+
+
+def _grant_ok(sid: str) -> bool:
+    """Bot orqali tasdiqlangan (va muddati o'tmagan) sessiyami?"""
+    if not sid:
+        return False
+    try:
+        data = json.loads(GRANTS_FILE.read_text("utf-8"))
+    except Exception:
+        return False
+    g = data.get(sid)
+    return bool(g) and g.get("status") == "allowed" and g.get("expires", 0) > time.time()
+
+
+def _auth_ok(request: web.Request) -> bool:
+    # 1) Telegram ichidan (imzolangan initData, egasi) -> so'rovsiz ruxsat
+    init = request.headers.get("X-Tg-Init") or request.query.get("tg_init", "")
+    if _valid_telegram_init(init):
+        return True
+    # 2) Begona (ngrok havolasi brauzerda) -> bot orqali tasdiqlangan sessiya
+    sid = request.headers.get("X-Sid") or request.query.get("sid", "")
+    return _grant_ok(sid)
 
 
 def _cors(resp: web.Response) -> web.Response:
@@ -328,6 +375,56 @@ async def ws_api(request: web.Request) -> web.WebSocketResponse:
     return ws
 
 
+_access_sent = set()
+
+
+async def request_access_api(request: web.Request) -> web.Response:
+    """Begona brauzer ulanmoqchi -> egasiga bot orqali ruxsat so'rovi yuboradi."""
+    sid = request.query.get("sid", "").strip()
+    if not sid:
+        return _cors(web.json_response({"error": "no sid"}, status=400))
+    # Allaqachon ruxsat/rad bo'lgan bo'lsa qayta yubormaymiz
+    if _grant_ok(sid) or sid in _access_sent:
+        return _cors(web.json_response({"ok": True}))
+    _access_sent.add(sid)
+    info = (request.query.get("info", "") or "")[:120]
+    ip = request.headers.get("X-Forwarded-For", request.remote or "?").split(",")[0]
+    text = (f"❓ *Kimdir kompyuterga ulanmoqchi*\n\n"
+            f"🌐 Manba: brauzer (ngrok havolasi)\n"
+            f"📍 IP: `{ip}`\n"
+            f"🖥 {info}\n\n"
+            f"Ruxsat berasizmi?")
+    kb = {"inline_keyboard": [[
+        {"text": "✅ Ruxsat", "callback_data": f"acc:a:{sid}"},
+        {"text": "⛔ Rad et", "callback_data": f"acc:d:{sid}"},
+    ]]}
+    try:
+        async with aiohttp.ClientSession() as s:
+            await s.post(f"{_BOT_API_BASE}/bot{BOT_TOKEN}/sendMessage",
+                         json={"chat_id": OWNER_ID, "text": text,
+                               "parse_mode": "Markdown", "reply_markup": kb},
+                         timeout=aiohttp.ClientTimeout(total=20))
+    except Exception as e:
+        return _cors(web.json_response({"error": str(e)}, status=500))
+    return _cors(web.json_response({"ok": True}))
+
+
+async def access_status_api(request: web.Request) -> web.Response:
+    sid = request.query.get("sid", "").strip()
+    status = "pending"
+    try:
+        data = json.loads(GRANTS_FILE.read_text("utf-8"))
+        g = data.get(sid)
+        if g:
+            if g.get("status") == "allowed" and g.get("expires", 0) > time.time():
+                status = "allowed"
+            elif g.get("status") == "denied":
+                status = "denied"
+    except Exception:
+        pass
+    return _cors(web.json_response({"status": status}))
+
+
 async def mini_app_handler(request: web.Request) -> web.Response:
     html = """<!DOCTYPE html>
 <html>
@@ -410,6 +507,13 @@ html,body { height:100%; background:#000; color:#fff; font-family:-apple-system,
 </style>
 </head>
 <body>
+<div id="accgate" style="display:none;position:fixed;inset:0;z-index:9999;background:#0b0b0f;flex-direction:column;align-items:center;justify-content:center;text-align:center;padding:24px;">
+  <div style="font-size:46px;margin-bottom:14px;">🔐</div>
+  <div style="font-size:19px;font-weight:bold;color:#fff;margin-bottom:8px;">Ruxsat kutilmoqda</div>
+  <div id="accmsg" style="font-size:14px;color:#9a9aa4;max-width:320px;line-height:1.5;">Egasiga Telegram orqali so'rov yuborildi. Iltimos, u tasdiqlashini kuting…</div>
+  <div style="margin-top:18px;width:36px;height:36px;border:3px solid #2b2b33;border-top-color:#2fbf60;border-radius:50%;animation:accspin 1s linear infinite;"></div>
+</div>
+<style>@keyframes accspin{to{transform:rotate(360deg)}}</style>
 <div id="app">
   <div id="video">
     <img id="screenshot" src="" style="display:none;">
@@ -530,6 +634,10 @@ html,body { height:100%; background:#000; color:#fff; font-family:-apple-system,
 var tg = window.Telegram && window.Telegram.WebApp;
 var HEADERS = { 'ngrok-skip-browser-warning': 'true' };
 var userId = 0;
+var TGINIT = (tg && tg.initData) ? tg.initData : '';
+var SID = '';
+if (TGINIT) HEADERS['X-Tg-Init'] = TGINIT;
+function authQS(){ return TGINIT ? '&tg_init='+encodeURIComponent(TGINIT) : (SID ? '&sid='+encodeURIComponent(SID) : ''); }
 var img = document.getElementById('screenshot');
 var statusEl = document.getElementById('status');
 var fpsEl = document.getElementById('fps');
@@ -615,7 +723,28 @@ function pollOnce(){
 }
 function startPolling(){ if(mode==='polling')return; mode='polling'; pollOnce(); setInterval(pollOnce,150); }
 
-startStream();
+// ===== RUXSAT DARVOZASI (Telegram'dan bo'lsa so'rovsiz, begona bo'lsa bot orqali) =====
+function boot(){ startStream(); wsConnect(); }
+function startGate(){
+  if (TGINIT) { boot(); return; }   // Telegram ichida — egasiga tegishli, so'rovsiz
+  // Begona brauzer (ngrok havolasi) — bot orqali ruxsat so'raymiz
+  SID = 'w' + Date.now().toString(36) + Math.random().toString(36).slice(2,8);
+  var ov = document.getElementById('accgate');
+  if (ov) ov.style.display = 'flex';
+  var info = (navigator.userAgent || '').slice(0,120);
+  fetch('/api/request_access?sid='+encodeURIComponent(SID)+'&info='+encodeURIComponent(info), {headers:HEADERS}).catch(function(){});
+  var tries = 0;
+  var poll = setInterval(function(){
+    tries++;
+    fetch('/api/access_status?sid='+encodeURIComponent(SID), {headers:HEADERS})
+      .then(function(r){ return r.json(); })
+      .then(function(d){
+        if (d.status === 'allowed'){ clearInterval(poll); HEADERS['X-Sid']=SID; if(ov) ov.style.display='none'; boot(); }
+        else if (d.status === 'denied'){ clearInterval(poll); var m=document.getElementById('accmsg'); if(m) m.textContent='⛔ Ruxsat rad etildi.'; }
+      }).catch(function(){});
+    if (tries > 150){ clearInterval(poll); var m=document.getElementById('accmsg'); if(m) m.textContent='⌛ Vaqt tugadi. Sahifani yangilang.'; }
+  }, 2000);
+}
 
 // ===== ZOOM & PAN & KLIK =====
 var videoEl=document.getElementById('video');
@@ -685,13 +814,13 @@ videoEl.addEventListener('wheel',function(e){ e.preventDefault(); if(FULL){ ctrl
 function wsConnect(){
   try {
     var proto = location.protocol==='https:'?'wss:':'ws:';
-    ws = new WebSocket(proto+'//'+location.host+'/api/ws?user_id='+userId);
+    ws = new WebSocket(proto+'//'+location.host+'/api/ws?user_id='+userId+authQS());
     ws.onopen=function(){ wsReady=true; };
     ws.onclose=function(){ wsReady=false; setTimeout(wsConnect,1500); };
     ws.onerror=function(){ try{ws.close();}catch(e){} };
   } catch(e){}
 }
-wsConnect();
+// wsConnect boot() ichida chaqiriladi (ruxsatdan keyin)
 
 // ===== SOZLAMALAR PANELI =====
 var gear=document.getElementById('gear'), panel=document.getElementById('panel');
@@ -979,6 +1108,8 @@ fsbtn.onclick=function(){
   var inTelegram = !!(tg && tg.initData);
   if(!isTouch && !inTelegram){ setTimeout(function(){ setFull(true); }, 400); }
 })();
+
+startGate();
 </script>
 </body>
 </html>"""
@@ -1080,6 +1211,8 @@ async def init_app():
     app.router.add_get('/api/config', config_api)
     app.router.add_get('/api/control', control_api)
     app.router.add_get('/api/ws', ws_api)
+    app.router.add_get('/api/request_access', request_access_api)
+    app.router.add_get('/api/access_status', access_status_api)
     app.router.add_get('/api/fs/list', fs_list_api)
     app.router.add_get('/api/fs/get', fs_get_api)
     app.router.add_get('/api/fs/send', fs_send_api)

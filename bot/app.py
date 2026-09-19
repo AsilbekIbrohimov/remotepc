@@ -162,6 +162,48 @@ async def _log_callback_mw(handler, event, data):
 dp.message.outer_middleware(_log_message_mw)
 dp.callback_query.outer_middleware(_log_callback_mw)
 
+# ── Masofadan ulanishga ruxsat (Mini App begona brauzerdan ochilganda) ──
+GRANTS_FILE = BASE_DIR / "access_grants.json"
+ACCESS_TTL_SECONDS = 60 * 60  # ruxsat 1 soat amal qiladi
+
+
+def _write_grant(sid: str, status: str) -> None:
+    try:
+        try:
+            data = json.loads(GRANTS_FILE.read_text("utf-8"))
+        except Exception:
+            data = {}
+        # eski (muddati o'tgan) yozuvlarni tozalaymiz
+        now = time.time()
+        data = {k: v for k, v in data.items()
+                if v.get("status") == "denied" or v.get("expires", 0) > now - 3600}
+        data[sid] = {"status": status, "expires": now + ACCESS_TTL_SECONDS}
+        GRANTS_FILE.write_text(json.dumps(data), encoding="utf-8")
+    except Exception as e:
+        print(f"grant yozish xato: {e}")
+
+
+@dp.callback_query(F.data.startswith("acc:"))
+async def on_access(callback: CallbackQuery):
+    parts = callback.data.split(":", 2)
+    if len(parts) != 3:
+        return
+    _, act, sid = parts
+    if act == "a":
+        _write_grant(sid, "allowed")
+        await callback.answer("✅ Ruxsat berildi")
+        try:
+            await callback.message.edit_text("✅ Ulanishga ruxsat berildi (1 soat).")
+        except Exception:
+            pass
+    else:
+        _write_grant(sid, "denied")
+        await callback.answer("⛔ Rad etildi")
+        try:
+            await callback.message.edit_text("⛔ Ulanish rad etildi.")
+        except Exception:
+            pass
+
 def get_main_keyboard() -> ReplyKeyboardMarkup:
     rows = []
     # Telegram Mini App faqat HTTPS URL qabul qiladi; aks holda /start crash bo'ladi.
