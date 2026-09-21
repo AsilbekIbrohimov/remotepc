@@ -30,6 +30,16 @@ _BOT_API_BASE = (os.environ.get("LOCAL_BOT_API_URL", "http://127.0.0.1:8081").st
 # Bot orqali ruxsat berilgan sessiyalar (bot yozadi, webapp o'qiydi)
 GRANTS_FILE = BASE_DIR / "access_grants.json"
 
+# Mini App maxfiy kaliti (bot yozadi) — Telegram tugmasidan kelgan URL'da bo'ladi
+_MINIAPP_KEY_FILE = BASE_DIR / "miniapp_key.txt"
+
+
+def _miniapp_key() -> str:
+    try:
+        return _MINIAPP_KEY_FILE.read_text("utf-8").strip()
+    except Exception:
+        return ""
+
 # ===== REMOTE CONTROL (sichqoncha / klaviatura) =====
 _user32 = ctypes.windll.user32
 try:
@@ -235,11 +245,16 @@ def _grant_ok(sid: str) -> bool:
 
 
 def _auth_ok(request: web.Request) -> bool:
-    # 1) Telegram ichidan (imzolangan initData, egasi) -> so'rovsiz ruxsat
+    # 1) Mini App maxfiy kaliti (Telegram tugmasidan ochilgan URL'da bo'ladi) -> egasi
+    key = request.headers.get("X-Key") or request.query.get("k", "")
+    mk = _miniapp_key()
+    if key and mk and hmac.compare_digest(key, mk):
+        return True
+    # 2) Telegram initData (imzolangan, egasi) -> so'rovsiz ruxsat
     init = request.headers.get("X-Tg-Init") or request.query.get("tg_init", "")
     if _valid_telegram_init(init):
         return True
-    # 2) Begona (ngrok havolasi brauzerda) -> bot orqali tasdiqlangan sessiya
+    # 3) Begona (ngrok havolasi brauzerda) -> bot orqali tasdiqlangan sessiya
     sid = request.headers.get("X-Sid") or request.query.get("sid", "")
     return _grant_ok(sid)
 
@@ -649,8 +664,16 @@ var HEADERS = { 'ngrok-skip-browser-warning': 'true' };
 var userId = 0;
 var TGINIT = (tg && tg.initData) ? tg.initData : '';
 var SID = '';
+var MINIKEY = '';
+try { MINIKEY = new URLSearchParams(location.search).get('k') || ''; } catch(e){}
 if (TGINIT) HEADERS['X-Tg-Init'] = TGINIT;
-function authQS(){ return TGINIT ? '&tg_init='+encodeURIComponent(TGINIT) : (SID ? '&sid='+encodeURIComponent(SID) : ''); }
+if (MINIKEY) HEADERS['X-Key'] = MINIKEY;
+function authQS(){
+  if (MINIKEY) return '&k='+encodeURIComponent(MINIKEY);
+  if (TGINIT) return '&tg_init='+encodeURIComponent(TGINIT);
+  if (SID) return '&sid='+encodeURIComponent(SID);
+  return '';
+}
 var img = document.getElementById('screenshot');
 var statusEl = document.getElementById('status');
 var fpsEl = document.getElementById('fps');
@@ -739,7 +762,7 @@ function startPolling(){ if(mode==='polling')return; mode='polling'; pollOnce();
 // ===== RUXSAT DARVOZASI (Telegram'dan bo'lsa so'rovsiz, begona bo'lsa bot orqali) =====
 function boot(){ startStream(); wsConnect(); }
 function startGate(){
-  if (TGINIT) { boot(); return; }   // Telegram ichida — egasiga tegishli, so'rovsiz
+  if (MINIKEY || TGINIT) { boot(); return; }   // Telegram tugmasi (kalit) yoki initData — egasi, so'rovsiz
   // Begona brauzer (ngrok havolasi) — bot orqali ruxsat so'raymiz
   SID = 'w' + Date.now().toString(36) + Math.random().toString(36).slice(2,8);
   var ov = document.getElementById('accgate');

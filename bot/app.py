@@ -46,6 +46,29 @@ load_dotenv(BASE_DIR / ".env")
 BOT_TOKEN = os.environ["TG_BOT_TOKEN"]
 OWNER_ID = int(os.environ["TG_OWNER_ID"])
 WEB_APP_URL = os.environ.get("WEB_APP_URL", "https://example.com")
+
+# Mini App maxfiy kaliti — Telegram tugmasidan ochilganda URL'ga qo'shiladi.
+# Shu kalit bilan kirgan (egasi) ruxsatsiz kiradi; kalitsiz begona ruxsat so'raydi.
+_MINIAPP_KEY_FILE = BASE_DIR / "miniapp_key.txt"
+
+
+def _get_miniapp_key() -> str:
+    try:
+        k = _MINIAPP_KEY_FILE.read_text("utf-8").strip()
+        if k:
+            return k
+    except Exception:
+        pass
+    import secrets
+    k = secrets.token_urlsafe(18)
+    try:
+        _MINIAPP_KEY_FILE.write_text(k, encoding="utf-8")
+    except Exception:
+        pass
+    return k
+
+
+MINIAPP_KEY = _get_miniapp_key()
 CHATS_FILE = BASE_DIR / "subscribed_chats.json"
 STATUS_INTERVAL_SECONDS = 30 * 60
 ALERT_CHECK_INTERVAL_SECONDS = 2 * 60
@@ -252,7 +275,9 @@ def get_main_keyboard() -> ReplyKeyboardMarkup:
     rows = []
     # Telegram Mini App faqat HTTPS URL qabul qiladi; aks holda /start crash bo'ladi.
     if WEB_APP_URL.startswith("https://"):
-        rows.append([KeyboardButton(text="🌐 Mini App", web_app=WebAppInfo(url=WEB_APP_URL))])
+        sep = "&" if "?" in WEB_APP_URL else "?"
+        app_url = f"{WEB_APP_URL}{sep}k={MINIAPP_KEY}"
+        rows.append([KeyboardButton(text="🌐 Mini App", web_app=WebAppInfo(url=app_url))])
     rows += [
         [KeyboardButton(text="📊 Holat"), KeyboardButton(text="📸 Skrinshot")],
         [KeyboardButton(text="📋 Menyu")],
