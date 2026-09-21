@@ -103,7 +103,13 @@ EXCLUDED_DIR_NAMES = {
     ".idea", "venv", ".venv", "site-packages", ".cache", ".mypy_cache",
     ".pytest_cache", "telegram desktop",
 }
-EXCLUDED_EXTENSIONS = {".tmp", ".crdownload", ".part", ".partial", ".download", ".session-journal"}
+EXCLUDED_EXTENSIONS = {
+    ".tmp", ".crdownload", ".part", ".partial", ".download", ".session-journal",
+    # Tizim/vaqtinchalik fayllar (ayniqsa Desktop doim yangilaydi)
+    ".lnk", ".ini", ".url", ".db", ".dat", ".log", ".etl", ".lock", ".ldb",
+}
+# Nomi bo'yicha o'tkazib yuboriladigan tizim fayllari
+EXCLUDED_NAMES = {"desktop.ini", "thumbs.db", "ntuser.dat", "iconcache.db"}
 NEW_FILE_SETTLE_SECONDS = 2
 
 if USE_LOCAL_BOT_API:
@@ -534,6 +540,8 @@ def is_excluded_path(path: Path) -> bool:
     if any(part.lower() in EXCLUDED_DIR_NAMES for part in path.parts):
         return True
     if path.suffix.lower() in EXCLUDED_EXTENSIONS:
+        return True
+    if path.name.lower() in EXCLUDED_NAMES:
         return True
     if path.name.startswith(".") or path.name.startswith("~$"):
         return True
