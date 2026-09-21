@@ -542,6 +542,9 @@ def is_excluded_path(path: Path) -> bool:
 
 _file_debounce: dict[str, float] = {}
 _file_sent: dict[str, tuple[float, int]] = {}
+# Bot ishga tushgan vaqt — bundan OLDIN o'zgargan (eski) fayllarni yubormaymiz.
+# Aks holda qayta ishga tushganda / OneDrive sinxronlaganda eski fayllar yuboriladi.
+_BOT_START = time.time()
 
 
 async def handle_new_file(path: Path, is_update: bool = False):
@@ -563,6 +566,12 @@ async def handle_new_file(path: Path, is_update: bool = False):
         if not path.is_file() or path.stat().st_size != size:
             return  # hali yozilmoqda
     except OSError:
+        return
+
+    # Eski fayllarni yubormaymiz: faqat bot ishga tushgandan keyin o'zgargan/
+    # yaratilgan fayllar. (Restart yoki OneDrive sinxroni eski fayllarni
+    # "o'zgardi" deb belgilashi mumkin — ularni o'tkazib yuboramiz.)
+    if mtime < _BOT_START - 5:
         return
 
     # dedup: aynan shu (mtime, size) allaqachon yuborilgan bo'lsa, qayta yubormaymiz
