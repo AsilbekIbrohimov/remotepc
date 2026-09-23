@@ -127,7 +127,9 @@ EXCLUDED_DIR_NAMES = {
     ".pytest_cache", "telegram desktop",
 }
 EXCLUDED_EXTENSIONS = {
-    ".tmp", ".crdownload", ".part", ".partial", ".download", ".session-journal",
+    ".tmp", ".crdownload", ".part", ".partial", ".download",
+    # Maxfiy sessiya fayllari (Telegram/userbot) — hech qachon yuborilmasin
+    ".session", ".session-journal",
     # Tizim/vaqtinchalik fayllar (ayniqsa Desktop doim yangilaydi)
     ".lnk", ".ini", ".url", ".db", ".dat", ".log", ".etl", ".lock", ".ldb",
 }
@@ -1677,6 +1679,42 @@ async def on_dvr(message: Message):
             "🔴 DVR yoqildi — ekran doimiy yozib borilmoqda.\n"
             "Oxirgi 10 daqiqa saqlanadi. Olish: /lastrec (yoki /lastrec 5)"
         )
+
+
+_MEDIA_DIR = BASE_DIR / "media" / "user"
+
+
+@dp.message(F.photo | F.video | F.document | F.animation | F.audio | F.video_note)
+async def on_media(message: Message):
+    """Botga yuborilgan/forward qilingan rasm/video montaj uchun saqlanadi."""
+    _MEDIA_DIR.mkdir(parents=True, exist_ok=True)
+    try:
+        name = None
+        if message.photo:
+            obj, ext = message.photo[-1], "jpg"
+        elif message.video:
+            obj, ext, name = message.video, "mp4", message.video.file_name
+        elif message.animation:
+            obj, ext, name = message.animation, "mp4", message.animation.file_name
+        elif message.audio:
+            obj, ext, name = message.audio, "mp3", message.audio.file_name
+        elif message.video_note:
+            obj, ext = message.video_note, "mp4"
+        else:
+            obj = message.document
+            name = message.document.file_name
+            ext = name.rsplit(".", 1)[-1] if name and "." in name else "bin"
+        ts = datetime.now().strftime("%H%M%S%f")[:-3]
+        fname = name or f"media_{ts}.{ext}"
+        fname = "".join(c for c in fname if c.isalnum() or c in "._- ") or f"media_{ts}.{ext}"
+        dest = _MEDIA_DIR / fname
+        if dest.exists():
+            dest = _MEDIA_DIR / f"{ts}_{fname}"
+        await bot.download(obj, destination=dest)
+        n = len(list(_MEDIA_DIR.glob("*")))
+        await message.answer(f"✅ Saqlandi: {dest.name}\n📁 Jami: {n} ta fayl")
+    except Exception as e:
+        await message.answer(f"❌ Saqlashda xato: {e}")
 
 
 async def main():
