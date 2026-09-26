@@ -1683,7 +1683,8 @@ async def on_dvr(message: Message):
 
 
 # ── Avto-yozuv: har N daqiqada oxirgi yozuvni avtomatik yuborish ──
-_autorec = {"on": False, "interval": 600}
+# Default YONIQ — bot har safar ishga tushganda avtomatik yoziladi va yuboriladi.
+_autorec = {"on": True, "interval": 600}
 
 
 async def autorec_worker():
