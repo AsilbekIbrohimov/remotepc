@@ -1103,6 +1103,7 @@ async def set_bot_commands():
         BotCommand(command="stopface", description="Yuz kuzatuvini to'xtatish"),
         BotCommand(command="lastrec", description="Oxirgi 10 daqiqa ekran yozuvini olish"),
         BotCommand(command="dvr", description="Doimiy yozib borishni yoqish/o'chirish"),
+        BotCommand(command="autorec", description="Avto: har N daqiqada yozuvni yuborish (/autorec 10)"),
         BotCommand(command="uzish", description="Barcha masofaviy ulanishlarni uzish"),
     ])
 
@@ -1681,6 +1682,68 @@ async def on_dvr(message: Message):
         )
 
 
+# ── Avto-yozuv: har N daqiqada oxirgi yozuvni avtomatik yuborish ──
+_autorec = {"on": False, "interval": 600}
+
+
+async def autorec_worker():
+    # Interval boshida biroz kutamiz (DVR to'lishi uchun), keyin davriy yuboramiz
+    while True:
+        await asyncio.sleep(_autorec["interval"])
+        if not _autorec["on"]:
+            continue
+        if not _dvr["on"]:
+            _dvr_start()
+            continue
+        mins = min(10, max(1, _autorec["interval"] // 60))
+        try:
+            out = await asyncio.get_running_loop().run_in_executor(None, _dvr_compile, mins)
+            if not out:
+                continue
+            chats = load_chats()
+            size = os.path.getsize(out)
+            for chat_id in chats:
+                try:
+                    if size <= MAX_TELEGRAM_FILE_BYTES:
+                        await bot.send_video(
+                            chat_id, FSInputFile(out),
+                            caption=f"🎥 Avto-yozuv: oxirgi {mins} daqiqa • {datetime.now():%H:%M}",
+                        )
+                    else:
+                        await bot.send_message(chat_id, f"⚠️ Avto-yozuv {size//(1024**2)}MB — juda katta.")
+                except Exception as e:
+                    print(f"autorec send xato ({chat_id}): {e}")
+            try:
+                os.remove(out)
+            except OSError:
+                pass
+        except Exception as e:
+            print(f"autorec xato: {e}")
+
+
+@dp.message(Command("autorec"))
+async def on_autorec(message: Message, command: CommandObject):
+    if _autorec["on"]:
+        _autorec["on"] = False
+        await message.answer("⏹ Avto-yozuv o'chirildi.")
+        return
+    mins = 10
+    if command.args:
+        try:
+            mins = max(2, min(30, int(command.args.strip())))
+        except ValueError:
+            pass
+    _autorec["interval"] = mins * 60
+    _autorec["on"] = True
+    if not _dvr["on"]:
+        _dvr_start()
+    await message.answer(
+        f"🔴 Avto-yozuv yoqildi — har *{mins} daqiqada* oxirgi {min(10, mins)} daqiqalik "
+        f"yozuv avtomatik yuboriladi.\nO'chirish: /autorec",
+        parse_mode="Markdown",
+    )
+
+
 _MEDIA_DIR = BASE_DIR / "media" / "user"
 
 
@@ -1726,6 +1789,7 @@ async def main():
     asyncio.create_task(history_sampler())
     asyncio.create_task(lock_watcher())
     asyncio.create_task(dvr_watchdog())
+    asyncio.create_task(autorec_worker())
     start_file_watcher(asyncio.get_running_loop())
     await dp.start_polling(bot)
 
