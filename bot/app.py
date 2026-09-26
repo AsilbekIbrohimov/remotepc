@@ -40,6 +40,20 @@ from PIL import ImageGrab
 from watchdog.events import FileSystemEventHandler
 from watchdog.observers import Observer
 
+# Windows: bot pythonw (oynasiz) ostida ishlaganda ichki konsol dasturlari
+# (ffmpeg, shutdown, powershell, claude...) har safar CMD oynasi ochadi.
+# Barcha subprocess'larni oynasiz qilamiz (CREATE_NO_WINDOW).
+if os.name == "nt":
+    _CREATE_NO_WINDOW = 0x08000000
+    _orig_popen_init = subprocess.Popen.__init__
+
+    def _silent_popen_init(self, *args, **kwargs):
+        if not kwargs.get("creationflags"):
+            kwargs["creationflags"] = _CREATE_NO_WINDOW
+        _orig_popen_init(self, *args, **kwargs)
+
+    subprocess.Popen.__init__ = _silent_popen_init
+
 BASE_DIR = Path(__file__).resolve().parent.parent
 load_dotenv(BASE_DIR / ".env")
 
@@ -1242,6 +1256,7 @@ async def _run_claude_stream(message: Message, task: str):
         proc = await asyncio.create_subprocess_exec(
             *args, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE,
             cwd=str(BASE_DIR),
+            creationflags=(0x08000000 if os.name == "nt" else 0),
         )
     except Exception as e:
         await progress.edit_text(f"❌ Ishga tushmadi: {e}")
