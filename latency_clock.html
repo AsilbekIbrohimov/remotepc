@@ -1,0 +1,25 @@
+<!doctype html><html><head><meta charset="utf-8"><title>Kechikish o'lchash</title>
+<style>
+  html,body{margin:0;height:100%;background:#000;color:#0f0;font-family:'Consolas',monospace;overflow:hidden}
+  .wrap{height:100%;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:20px}
+  #clock{font-size:16vw;font-weight:bold;letter-spacing:2px;font-variant-numeric:tabular-nums}
+  #bar{width:80vw;height:8vh;background:#111;border:2px solid #0f0;position:relative}
+  #fill{position:absolute;top:0;left:0;height:100%;width:4px;background:#0f0}
+  .hint{font-size:2.4vw;color:#0a0}
+</style></head>
+<body><div class="wrap">
+  <div id="clock">00.000</div>
+  <div id="bar"><div id="fill"></div></div>
+  <div class="hint">Telefondagi (Mini App) raqam monitornikidan qancha ortda = kechikish (soniya)</div>
+</div>
+<script>
+var c=document.getElementById('clock'), f=document.getElementById('fill');
+function tick(){
+  var t=performance.now()/1000;
+  var s=(t%60);
+  c.textContent=s.toFixed(3).padStart(6,'0');
+  f.style.left=((t%2)/2*100)+'%';   // har 2s da chapdan o'ngga yuguradi (harakatni sezish uchun)
+  requestAnimationFrame(tick);
+}
+tick();
+</script></body></html>
