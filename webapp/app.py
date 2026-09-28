@@ -18,11 +18,12 @@ from PIL import ImageGrab, ImageDraw
 from dotenv import load_dotenv
 
 # Tez ekran olish: dxcam (DXGI, GPU-tez ~100+fps). Bo'lmasa mss, u ham bo'lmasa PIL.
+# ON-DEMAND: faqat oqim (Mini App ochiq) bo'lganda grab qilinadi -> bekorga yuk yo'q.
 _HAS_DX = False
+_dx_last = {"frame": None}
 try:
     import dxcam
     _dx = dxcam.create(output_color="BGR")
-    _dx.start(target_fps=60, video_mode=True)
     _HAS_DX = True
 except Exception as _e:
     _dx = None
@@ -204,9 +205,11 @@ def _capture_bgr(allscreens: bool):
     """Eng tez usul bilan BGR numpy kadr qaytaradi (dxcam -> mss -> PIL)."""
     if _HAS_DX and not allscreens:
         try:
-            f = _dx.get_latest_frame()
+            f = _dx.grab()  # o'zgarmagan bo'lsa None -> oxirgi kadrni ishlatamiz
             if f is not None:
-                return f
+                _dx_last["frame"] = f
+            if _dx_last["frame"] is not None:
+                return _dx_last["frame"]
         except Exception:
             pass
     if _mss_mod is not None:
@@ -596,16 +599,16 @@ html,body { height:100%; background:#000; color:#fff; font-family:-apple-system,
     <div id="zoomlevel" style="display:none;">1.0x</div>
     <div id="panel">
       <h4>Sozlamalar <span id="panelClose" style="float:right;cursor:pointer;color:#f55;">✕</span></h4>
-      <label>Kenglik: <span class="val" id="wval">900</span>px</label>
-      <input type="range" id="wslider" min="480" max="1920" step="60" value="900">
-      <label>Tiniqlik: <span class="val" id="qval">38</span></label>
-      <input type="range" id="qslider" min="20" max="85" step="1" value="38">
-      <label>Maks FPS: <span class="val" id="fval">20</span></label>
-      <input type="range" id="fslider" min="1" max="30" step="1" value="20">
+      <label>Kenglik: <span class="val" id="wval">540</span>px</label>
+      <input type="range" id="wslider" min="480" max="1920" step="60" value="540">
+      <label>Tiniqlik: <span class="val" id="qval">28</span></label>
+      <input type="range" id="qslider" min="20" max="85" step="1" value="28">
+      <label>Maks FPS: <span class="val" id="fval">30</span></label>
+      <input type="range" id="fslider" min="1" max="30" step="1" value="30">
       <div class="presets">
-        <button data-w="720" data-q="30" data-f="25">Tez</button>
-        <button data-w="1100" data-q="50" data-f="15">O'rta</button>
-        <button data-w="1600" data-q="70" data-f="8">Tiniq</button>
+        <button data-w="480" data-q="26" data-f="30">Tez</button>
+        <button data-w="720" data-q="34" data-f="22">O'rta</button>
+        <button data-w="1080" data-q="46" data-f="14">Tiniq</button>
       </div>
       <div class="presets" style="margin-top:8px;">
         <button id="toggleScreens">🖥 Barcha monitorlar</button>
