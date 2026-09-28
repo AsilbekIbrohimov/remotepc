@@ -301,14 +301,8 @@ async def on_uzish(message: Message):
     await message.answer("🔌 Barcha masofaviy ulanishlar uzildi.\n(Telegram orqali o'zingiz baribir ochasiz.)")
 
 def get_main_keyboard() -> ReplyKeyboardMarkup:
-    rows = []
-    # Telegram Mini App faqat HTTPS URL qabul qiladi; aks holda /start crash bo'ladi.
-    web = _current_web_url()
-    if web.startswith("https://"):
-        sep = "&" if "?" in web else "?"
-        app_url = f"{web}{sep}k={MINIAPP_KEY}"
-        rows.append([KeyboardButton(text="🌐 Mini App", web_app=WebAppInfo(url=app_url))])
-    rows += [
+    # Mini App yon menyu tugmasidan (chat pastidagi ⊞) ochiladi — pastda dublikat kerak emas.
+    rows = [
         [KeyboardButton(text="📊 Holat"), KeyboardButton(text="📸 Skrinshot")],
         [KeyboardButton(text="📋 Menyu")],
     ]
