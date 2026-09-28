@@ -31,6 +31,7 @@ from aiogram.types import (
     InlineKeyboardButton,
     InlineKeyboardMarkup,
     KeyboardButton,
+    MenuButtonWebApp,
     Message,
     ReplyKeyboardMarkup,
     WebAppInfo,
@@ -1809,9 +1810,40 @@ async def on_media(message: Message):
         await message.answer(f"❌ Saqlashda xato: {e}")
 
 
+async def update_menu_button():
+    """Chat menyu tugmasini joriy tunnel havolasiga sozlaydi (har safar /start shart emas)."""
+    web = _current_web_url()
+    if not web.startswith("https://"):
+        return
+    sep = "&" if "?" in web else "?"
+    url = f"{web}{sep}k={MINIAPP_KEY}"
+    try:
+        await bot.set_chat_menu_button(
+            chat_id=OWNER_ID,
+            menu_button=MenuButtonWebApp(text="🌐 Mini App", web_app=WebAppInfo(url=url)),
+        )
+    except Exception as e:
+        print(f"menyu tugma xato: {e}")
+
+
+async def menu_url_watcher():
+    """web_url.txt o'zgarsa (tunnel yangi havola bergani) menyu tugmasini avtomatik yangilaydi."""
+    last = None
+    while True:
+        try:
+            cur = _current_web_url()
+            if cur.startswith("https://") and cur != last:
+                await update_menu_button()
+                last = cur
+        except Exception:
+            pass
+        await asyncio.sleep(20)
+
+
 async def main():
     await set_bot_commands()
     await notify_startup()
+    await update_menu_button()
     _dvr_start()
     asyncio.create_task(periodic_broadcast())
     asyncio.create_task(periodic_alerts())
@@ -1819,6 +1851,7 @@ async def main():
     asyncio.create_task(lock_watcher())
     asyncio.create_task(dvr_watchdog())
     asyncio.create_task(autorec_worker())
+    asyncio.create_task(menu_url_watcher())
     start_file_watcher(asyncio.get_running_loop())
     await dp.start_polling(bot)
 
