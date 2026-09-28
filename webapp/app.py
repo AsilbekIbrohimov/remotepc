@@ -11,9 +11,25 @@ from pathlib import Path
 from urllib.parse import parse_qsl
 
 import aiohttp
+import numpy as np
+import cv2
 from aiohttp import web
 from PIL import ImageGrab, ImageDraw
 from dotenv import load_dotenv
+
+# Tez ekran olish: dxcam (DXGI, GPU-tez ~100+fps). Bo'lmasa mss, u ham bo'lmasa PIL.
+_HAS_DX = False
+try:
+    import dxcam
+    _dx = dxcam.create(output_color="BGR")
+    _dx.start(target_fps=60, video_mode=True)
+    _HAS_DX = True
+except Exception as _e:
+    _dx = None
+try:
+    import mss as _mss_mod
+except Exception:
+    _mss_mod = None
 
 BASE_DIR = Path(__file__).resolve().parent.parent
 load_dotenv(BASE_DIR / ".env")
@@ -171,18 +187,39 @@ def do_special(name: str) -> None:
 
 
 # ===== SCREENSHOT =====
-STREAM_CFG = {"w": 900, "q": 38, "fps": 20, "cursor": 1, "allscreens": 0}
+STREAM_CFG = {"w": 900, "q": 40, "fps": 30, "cursor": 1, "allscreens": 0}
 
 # Windows kursor o'qi shakli (uchidan boshlab)
 _CURSOR_SHAPE = [(0, 0), (0, 18), (5, 14), (8, 20), (11, 19), (7, 12), (13, 12)]
 
 
-def _draw_cursor(img, x, y):
-    d = ImageDraw.Draw(img)
-    pts = [(x + px, y + py) for px, py in _CURSOR_SHAPE]
-    # qora chegara (qalinroq ko'rinsin) + oq to'ldirish
-    d.polygon(pts, fill=(255, 255, 255), outline=(0, 0, 0))
-    d.line(pts + [pts[0]], fill=(0, 0, 0), width=1)
+def _draw_cursor_cv(frame, x, y):
+    # frame: BGR numpy
+    pts = np.array([(x + px, y + py) for px, py in _CURSOR_SHAPE], np.int32)
+    cv2.fillPoly(frame, [pts], (255, 255, 255))
+    cv2.polylines(frame, [pts], True, (0, 0, 0), 1, cv2.LINE_AA)
+
+
+def _capture_bgr(allscreens: bool):
+    """Eng tez usul bilan BGR numpy kadr qaytaradi (dxcam -> mss -> PIL)."""
+    if _HAS_DX and not allscreens:
+        try:
+            f = _dx.get_latest_frame()
+            if f is not None:
+                return f
+        except Exception:
+            pass
+    if _mss_mod is not None:
+        try:
+            with _mss_mod.mss() as sct:
+                mon = sct.monitors[0] if allscreens else sct.monitors[1]
+                raw = sct.grab(mon)
+                return np.ascontiguousarray(np.asarray(raw)[:, :, :3])
+        except Exception:
+            pass
+    # oxirgi chora: PIL
+    img = ImageGrab.grab(all_screens=allscreens)
+    return cv2.cvtColor(np.asarray(img), cv2.COLOR_RGB2BGR)
 
 
 def take_jpeg_bytes() -> bytes:
@@ -190,22 +227,22 @@ def take_jpeg_bytes() -> bytes:
     q = STREAM_CFG["q"]
     allscreens = bool(STREAM_CFG.get("allscreens"))
     ox, oy, _, _ = _capture_bounds()
-    img = ImageGrab.grab(all_screens=allscreens)
-    if img.width > w:
-        ratio = w / img.width
-        img = img.resize((w, int(img.height * ratio)))
+    frame = _capture_bgr(allscreens)
+    h, wid = frame.shape[:2]
+    if wid > w:
+        ratio = w / wid
+        frame = cv2.resize(frame, (w, int(h * ratio)), interpolation=cv2.INTER_LINEAR)
     else:
         ratio = 1.0
     if STREAM_CFG.get("cursor"):
         try:
             pt = _POINT()
             _user32.GetCursorPos(ctypes.byref(pt))
-            _draw_cursor(img, int((pt.x - ox) * ratio), int((pt.y - oy) * ratio))
+            _draw_cursor_cv(frame, int((pt.x - ox) * ratio), int((pt.y - oy) * ratio))
         except Exception:
             pass
-    buf = io.BytesIO()
-    img.save(buf, format="JPEG", quality=q)
-    return buf.getvalue()
+    ok, enc = cv2.imencode(".jpg", frame, [cv2.IMWRITE_JPEG_QUALITY, q])
+    return enc.tobytes()
 
 
 def take_screenshot_b64() -> str:
