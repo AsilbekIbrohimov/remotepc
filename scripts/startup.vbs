@@ -17,5 +17,5 @@ WScript.Sleep 10000
 ' 4) Bot
 sh.Run """" & py & """ """ & base & "monitor_bot.py""", 0, False
 
-' 5) ngrok tunnel watcher
-sh.Run "powershell -WindowStyle Hidden -ExecutionPolicy Bypass -File """ & base & "scripts\keep_ngrok.ps1""", 0, False
+' 5) Cloudflare Tunnel watcher (bepul, trafik limiti yo'q)
+sh.Run "powershell -WindowStyle Hidden -ExecutionPolicy Bypass -File """ & base & "scripts\keep_cloudflared.ps1""", 0, False

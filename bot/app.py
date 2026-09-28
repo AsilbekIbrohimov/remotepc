@@ -60,6 +60,18 @@ load_dotenv(BASE_DIR / ".env")
 BOT_TOKEN = os.environ["TG_BOT_TOKEN"]
 OWNER_ID = int(os.environ["TG_OWNER_ID"])
 WEB_APP_URL = os.environ.get("WEB_APP_URL", "https://example.com")
+# Cloudflare Tunnel har restartda yangi havola beradi -> watcher web_url.txt ga yozadi.
+WEB_URL_FILE = BASE_DIR / "web_url.txt"
+
+
+def _current_web_url() -> str:
+    try:
+        u = WEB_URL_FILE.read_text("utf-8").strip()
+        if u.startswith("https://"):
+            return u
+    except Exception:
+        pass
+    return WEB_APP_URL
 
 # Mini App maxfiy kaliti — Telegram tugmasidan ochilganda URL'ga qo'shiladi.
 # Shu kalit bilan kirgan (egasi) ruxsatsiz kiradi; kalitsiz begona ruxsat so'raydi.
@@ -290,9 +302,10 @@ async def on_uzish(message: Message):
 def get_main_keyboard() -> ReplyKeyboardMarkup:
     rows = []
     # Telegram Mini App faqat HTTPS URL qabul qiladi; aks holda /start crash bo'ladi.
-    if WEB_APP_URL.startswith("https://"):
-        sep = "&" if "?" in WEB_APP_URL else "?"
-        app_url = f"{WEB_APP_URL}{sep}k={MINIAPP_KEY}"
+    web = _current_web_url()
+    if web.startswith("https://"):
+        sep = "&" if "?" in web else "?"
+        app_url = f"{web}{sep}k={MINIAPP_KEY}"
         rows.append([KeyboardButton(text="🌐 Mini App", web_app=WebAppInfo(url=app_url))])
     rows += [
         [KeyboardButton(text="📊 Holat"), KeyboardButton(text="📸 Skrinshot")],

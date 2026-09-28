@@ -46,3 +46,7 @@ access_grants.json
 *.bak
 
 miniapp_key.txt
+
+web_url.txt
+cloudflared.log
+cloudflared_out.log
