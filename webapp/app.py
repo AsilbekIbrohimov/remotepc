@@ -187,7 +187,7 @@ def do_special(name: str) -> None:
 
 
 # ===== SCREENSHOT =====
-STREAM_CFG = {"w": 720, "q": 32, "fps": 30, "cursor": 1, "allscreens": 0}
+STREAM_CFG = {"w": 540, "q": 28, "fps": 30, "cursor": 1, "allscreens": 0}
 
 # Windows kursor o'qi shakli (uchidan boshlab)
 _CURSOR_SHAPE = [(0, 0), (0, 18), (5, 14), (8, 20), (11, 19), (7, 12), (13, 12)]
