@@ -1479,8 +1479,25 @@ async def _send_face(jpeg_bytes: bytes, n: int):
 
 
 def _face_worker(loop, flag):
-    cap = cv2.VideoCapture(0, cv2.CAP_DSHOW)
-    if not cap.isOpened():
+    # DirectShow daemon-thread'da COM init talab qiladi; bo'lmasa kamera ochilmaydi.
+    try:
+        import pythoncom
+        pythoncom.CoInitialize()
+    except Exception:
+        pass
+    cap = None
+    for backend in (cv2.CAP_DSHOW, cv2.CAP_MSMF, None):
+        try:
+            c = cv2.VideoCapture(0, backend) if backend is not None else cv2.VideoCapture(0)
+            if c.isOpened():
+                ok, _ = c.read()
+                if ok:
+                    cap = c
+                    break
+            c.release()
+        except Exception:
+            pass
+    if cap is None:
         asyncio.run_coroutine_threadsafe(_notify_face_error(loop), loop)
         return
     cascade = _get_cascade()
