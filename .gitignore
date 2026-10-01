@@ -50,3 +50,7 @@ miniapp_key.txt
 web_url.txt
 cloudflared.log
 cloudflared_out.log
+
+# Masofaviy ekran ulashish tokenlari (maxfiy, transient)
+.screencast_token
+.remotedesktop_token

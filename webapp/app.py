@@ -1,6 +1,5 @@
 import asyncio
 import base64
-import ctypes
 import hashlib
 import hmac
 import io
@@ -14,23 +13,11 @@ import aiohttp
 import numpy as np
 import cv2
 from aiohttp import web
-from PIL import ImageGrab, ImageDraw
 from dotenv import load_dotenv
 
-# Tez ekran olish: dxcam (DXGI, GPU-tez ~100+fps). Bo'lmasa mss, u ham bo'lmasa PIL.
-# ON-DEMAND: faqat oqim (Mini App ochiq) bo'lganda grab qilinadi -> bekorga yuk yo'q.
-_HAS_DX = False
-_dx_last = {"frame": None}
-try:
-    import dxcam
-    _dx = dxcam.create(output_color="BGR")
-    _HAS_DX = True
-except Exception as _e:
-    _dx = None
-try:
-    import mss as _mss_mod
-except Exception:
-    _mss_mod = None
+import sys as _sys
+_sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+import platform_compat as plat
 
 BASE_DIR = Path(__file__).resolve().parent.parent
 load_dotenv(BASE_DIR / ".env")
@@ -57,199 +44,63 @@ def _miniapp_key() -> str:
     except Exception:
         return ""
 
-# ===== REMOTE CONTROL (sichqoncha / klaviatura) =====
-_user32 = ctypes.windll.user32
-try:
-    _user32.SetProcessDPIAware()
-except Exception:
-    pass
-_SCREEN_W = _user32.GetSystemMetrics(0)
-_SCREEN_H = _user32.GetSystemMetrics(1)
-_SM_XVIRT, _SM_YVIRT, _SM_CXVIRT, _SM_CYVIRT = 76, 77, 78, 79
-
-
-def _capture_bounds():
-    # STREAM_CFG["allscreens"] yoqilsa — barcha monitorlar (virtual ekran), aks holda asosiy
-    if STREAM_CFG.get("allscreens"):
-        return (
-            _user32.GetSystemMetrics(_SM_XVIRT),
-            _user32.GetSystemMetrics(_SM_YVIRT),
-            _user32.GetSystemMetrics(_SM_CXVIRT),
-            _user32.GetSystemMetrics(_SM_CYVIRT),
-        )
-    return 0, 0, _SCREEN_W, _SCREEN_H
-
-MOUSEEVENTF_LEFTDOWN, MOUSEEVENTF_LEFTUP = 0x0002, 0x0004
-MOUSEEVENTF_RIGHTDOWN, MOUSEEVENTF_RIGHTUP = 0x0008, 0x0010
-MOUSEEVENTF_MIDDLEDOWN, MOUSEEVENTF_MIDDLEUP = 0x0020, 0x0040
-MOUSEEVENTF_WHEEL, MOUSEEVENTF_HWHEEL = 0x0800, 0x1000
-
-_BTN_EV = {
-    "left": (MOUSEEVENTF_LEFTDOWN, MOUSEEVENTF_LEFTUP),
-    "right": (MOUSEEVENTF_RIGHTDOWN, MOUSEEVENTF_RIGHTUP),
-    "middle": (MOUSEEVENTF_MIDDLEDOWN, MOUSEEVENTF_MIDDLEUP),
-}
-KEYEVENTF_KEYUP, KEYEVENTF_UNICODE = 0x0002, 0x0004
-
-SPECIAL_KEYS = {
-    "enter": 0x0D, "backspace": 0x08, "tab": 0x09, "esc": 0x1B,
-    "up": 0x26, "down": 0x28, "left": 0x25, "right": 0x27,
-    "win": 0x5B, "delete": 0x2E, "space": 0x20, "home": 0x24, "end": 0x23,
-    "pageup": 0x21, "pagedown": 0x22,
-    "volup": 0xAF, "voldown": 0xAE, "mute": 0xAD,
-    "playpause": 0xB3, "next": 0xB0, "prev": 0xB1,
-}
-
-MODIFIERS = {"ctrl": 0x11, "alt": 0x12, "shift": 0x10, "win": 0x5B}
+# ===== REMOTE CONTROL (platform_compat orqali — Wayland RemoteDesktop portali) =====
+STREAM_CFG = {"w": 720, "q": 32, "fps": 20, "cursor": 1, "allscreens": 0}
 
 
 def do_combo(combo: str) -> None:
-    vks = []
-    for p in combo.lower().split("+"):
-        p = p.strip()
-        if p in MODIFIERS:
-            vks.append(MODIFIERS[p])
-        elif p in SPECIAL_KEYS:
-            vks.append(SPECIAL_KEYS[p])
-        elif len(p) == 1:
-            vks.append(ord(p.upper()))
-    for vk in vks:
-        _user32.keybd_event(vk, 0, 0, 0)
-    for vk in reversed(vks):
-        _user32.keybd_event(vk, 0, KEYEVENTF_KEYUP, 0)
+    plat.input_combo(combo)
 
 
 def do_click(fx: float, fy: float, button: str = "left") -> None:
-    ox, oy, w, h = _capture_bounds()
-    x = int(ox + fx * w)
-    y = int(oy + fy * h)
-    _user32.SetCursorPos(x, y)
-    if button == "right":
-        _user32.mouse_event(MOUSEEVENTF_RIGHTDOWN, 0, 0, 0, 0)
-        _user32.mouse_event(MOUSEEVENTF_RIGHTUP, 0, 0, 0, 0)
-    elif button == "double":
-        for _ in range(2):
-            _user32.mouse_event(MOUSEEVENTF_LEFTDOWN, 0, 0, 0, 0)
-            _user32.mouse_event(MOUSEEVENTF_LEFTUP, 0, 0, 0, 0)
-    else:
-        _user32.mouse_event(MOUSEEVENTF_LEFTDOWN, 0, 0, 0, 0)
-        _user32.mouse_event(MOUSEEVENTF_LEFTUP, 0, 0, 0, 0)
+    plat.input_move(fx, fy)
+    plat.input_click(button)
 
 
 def do_move(fx: float, fy: float) -> None:
-    ox, oy, w, h = _capture_bounds()
-    _user32.SetCursorPos(int(ox + fx * w), int(oy + fy * h))
-
-
-class _POINT(ctypes.Structure):
-    _fields_ = [("x", ctypes.c_long), ("y", ctypes.c_long)]
+    plat.input_move(fx, fy)
 
 
 def do_move_rel(dx: int, dy: int) -> None:
-    pt = _POINT()
-    _user32.GetCursorPos(ctypes.byref(pt))
-    _user32.SetCursorPos(pt.x + dx, pt.y + dy)
+    plat.input_move_rel(dx, dy)
 
 
 def do_press(button: str = "left") -> None:
-    if button == "double":
-        down, up = _BTN_EV["left"]
-        for _ in range(2):
-            _user32.mouse_event(down, 0, 0, 0, 0)
-            _user32.mouse_event(up, 0, 0, 0, 0)
-        return
-    down, up = _BTN_EV.get(button, _BTN_EV["left"])
-    _user32.mouse_event(down, 0, 0, 0, 0)
-    _user32.mouse_event(up, 0, 0, 0, 0)
+    plat.input_click(button)
 
 
 def do_button(button: str, down: bool) -> None:
-    ev = _BTN_EV.get(button, _BTN_EV["left"])
-    _user32.mouse_event(ev[0] if down else ev[1], 0, 0, 0, 0)
+    plat.input_button(button, down)
 
 
 def do_scroll(amount: int) -> None:
-    _user32.mouse_event(MOUSEEVENTF_WHEEL, 0, 0, amount, 0)
+    plat.input_scroll(amount)
 
 
 def do_type(text: str) -> None:
-    for ch in text:
-        code = ord(ch)
-        _user32.keybd_event(0, code, KEYEVENTF_UNICODE, 0)
-        _user32.keybd_event(0, code, KEYEVENTF_UNICODE | KEYEVENTF_KEYUP, 0)
+    plat.input_type(text)
 
 
 def do_special(name: str) -> None:
-    vk = SPECIAL_KEYS.get(name)
-    if not vk:
-        return
-    _user32.keybd_event(vk, 0, 0, 0)
-    _user32.keybd_event(vk, 0, KEYEVENTF_KEYUP, 0)
+    plat.input_special(name)
 
 
-# ===== SCREENSHOT =====
-STREAM_CFG = {"w": 540, "q": 28, "fps": 30, "cursor": 1, "allscreens": 0}
-
-# Windows kursor o'qi shakli (uchidan boshlab)
-_CURSOR_SHAPE = [(0, 0), (0, 18), (5, 14), (8, 20), (11, 19), (7, 12), (13, 12)]
-
-
-def _draw_cursor_cv(frame, x, y):
-    # frame: BGR numpy
-    pts = np.array([(x + px, y + py) for px, py in _CURSOR_SHAPE], np.int32)
-    cv2.fillPoly(frame, [pts], (255, 255, 255))
-    cv2.polylines(frame, [pts], True, (0, 0, 0), 1, cv2.LINE_AA)
-
-
-def _capture_bgr(allscreens: bool):
-    """Eng tez usul bilan BGR numpy kadr qaytaradi (dxcam -> mss -> PIL)."""
-    if _HAS_DX and not allscreens:
-        try:
-            f = _dx.grab()  # o'zgarmagan bo'lsa None -> oxirgi kadrni ishlatamiz
-            if f is not None:
-                _dx_last["frame"] = f
-            if _dx_last["frame"] is not None:
-                return _dx_last["frame"]
-        except Exception:
-            pass
-    if _mss_mod is not None:
-        try:
-            with _mss_mod.mss() as sct:
-                mon = sct.monitors[0] if allscreens else sct.monitors[1]
-                raw = sct.grab(mon)
-                return np.ascontiguousarray(np.asarray(raw)[:, :, :3])
-        except Exception:
-            pass
-    # oxirgi chora: PIL
-    img = ImageGrab.grab(all_screens=allscreens)
-    return cv2.cvtColor(np.asarray(img), cv2.COLOR_RGB2BGR)
-
-
+# ===== SCREENSHOT (ScreenCast portali; kursor kadrga kiritilgan) =====
 def take_jpeg_bytes() -> bytes:
     w = STREAM_CFG["w"]
     q = STREAM_CFG["q"]
-    allscreens = bool(STREAM_CFG.get("allscreens"))
-    ox, oy, _, _ = _capture_bounds()
-    frame = _capture_bgr(allscreens)
+    frame = plat.grab_bgr()
     h, wid = frame.shape[:2]
     if wid > w:
         ratio = w / wid
         frame = cv2.resize(frame, (w, int(h * ratio)), interpolation=cv2.INTER_LINEAR)
-    else:
-        ratio = 1.0
-    if STREAM_CFG.get("cursor"):
-        try:
-            pt = _POINT()
-            _user32.GetCursorPos(ctypes.byref(pt))
-            _draw_cursor_cv(frame, int((pt.x - ox) * ratio), int((pt.y - oy) * ratio))
-        except Exception:
-            pass
     ok, enc = cv2.imencode(".jpg", frame, [cv2.IMWRITE_JPEG_QUALITY, q])
     return enc.tobytes()
 
 
 def take_screenshot_b64() -> str:
     return base64.b64encode(take_jpeg_bytes()).decode()
+
 
 
 def _valid_telegram_init(init_data: str) -> bool:
@@ -1194,9 +1045,7 @@ startGate();
 
 
 def _list_drives():
-    import string
-    bitmask = ctypes.windll.kernel32.GetLogicalDrives()
-    return [f"{letter}:\\" for i, letter in enumerate(string.ascii_uppercase) if bitmask & (1 << i)]
+    return plat.list_roots()
 
 
 async def fs_list_api(request: web.Request) -> web.Response:
@@ -1272,7 +1121,7 @@ async def fs_open_api(request: web.Request) -> web.Response:
     if not p.exists():
         return _cors(web.json_response({"error": "Topilmadi"}, status=404))
     try:
-        os.startfile(str(p))
+        plat.open_path(str(p))
         return _cors(web.json_response({"ok": True}))
     except Exception as e:
         return _cors(web.json_response({"error": str(e)}, status=500))

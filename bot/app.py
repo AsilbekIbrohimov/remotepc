@@ -11,6 +11,10 @@ from collections import deque
 from datetime import datetime, timedelta
 from pathlib import Path
 
+import sys as _sys
+_sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+import platform_compat as plat
+
 import cv2
 import numpy as np
 import imageio.v2 as imageio
@@ -398,7 +402,7 @@ _rec = {"on": False, "thread": None, "path": None, "start": 0.0}
 
 
 def _record_worker(path: str, flag):
-    first = ImageGrab.grab()
+    first = plat.grab_pil()
     ow, oh = first.size
     if ow > REC_MAX_WIDTH:
         sc = REC_MAX_WIDTH / ow
@@ -412,7 +416,7 @@ def _record_worker(path: str, flag):
     started = time.time()
     while flag() and (time.time() - started) < REC_MAX_SECONDS:
         t0 = time.time()
-        frame = np.array(ImageGrab.grab())
+        frame = np.array(plat.grab_pil())
         if (frame.shape[1], frame.shape[0]) != (out_w, out_h):
             frame = cv2.resize(frame, (out_w, out_h))
         writer.write(cv2.cvtColor(frame, cv2.COLOR_RGB2BGR))
@@ -537,13 +541,7 @@ def build_processes_text(top_n: int = 5) -> str:
 
 
 def is_screen_locked() -> bool:
-    hdesktop = ctypes.windll.user32.OpenDesktopW("Default", 0, False, DESKTOP_SWITCHDESKTOP)
-    if not hdesktop:
-        return True
-    try:
-        return not ctypes.windll.user32.SwitchDesktop(hdesktop)
-    finally:
-        ctypes.windll.user32.CloseDesktop(hdesktop)
+    return plat.is_screen_locked()
 
 
 def build_graph_photo() -> BufferedInputFile | None:
@@ -572,7 +570,7 @@ def build_graph_photo() -> BufferedInputFile | None:
 
 
 def take_screenshot() -> BufferedInputFile:
-    img = ImageGrab.grab()
+    img = plat.grab_pil()
     buf = io.BytesIO()
     img.save(buf, format="PNG")
     buf.seek(0)
@@ -744,7 +742,7 @@ async def on_screenshot(message: Message):
 @dp.message(Command("lock"))
 @dp.message(F.text == "🔒 Qulflash")
 async def on_lock(message: Message):
-    ctypes.windll.user32.LockWorkStation()
+    plat.lock_screen()
     await message.answer("🔒 Ekran qulflandi.")
 
 
@@ -806,7 +804,7 @@ async def on_menu_nav(callback: CallbackQuery):
         elif a == "shot":
             await bot.send_photo(cid, take_screenshot())
         elif a == "lock":
-            ctypes.windll.user32.LockWorkStation()
+            plat.lock_screen()
             await bot.send_message(cid, "🔒 Ekran qulflandi.")
         elif a == "clip":
             await on_clip(msg)
@@ -840,16 +838,18 @@ async def on_power(callback: CallbackQuery):
         await msg.edit_text("🛑 O'chirish — qachon?", reply_markup=delay_menu("s"))
     elif act == "go":
         kind, delay = parts[2], int(parts[3])
-        flag = "/r" if kind == "r" else "/s"
-        subprocess.run(["shutdown", flag, "/t", str(delay), "/f"])
+        if kind == "r":
+            plat.reboot(delay)
+        else:
+            plat.power_off(delay)
         verb = "Qayta yuklash" if kind == "r" else "O'chirish"
-        when = "darhol" if delay == 0 else f"{delay} soniyadan so'ng"
+        when = "darhol" if delay == 0 else f"~{max(1, round(delay/60))} daqiqadan so'ng"
         await msg.edit_text(f"✅ {verb}: {when}. Bekor qilish: /cancel")
     elif act == "sleep":
-        subprocess.run(["rundll32.exe", "powrprof.dll,SetSuspendState", "0", "1", "0"])
-        await msg.edit_text("😴 Uxlash rejimiga o'tkazildi.")
+        _ok, _txt = plat.suspend()
+        await msg.edit_text(_txt, reply_markup=power_menu())
     elif act == "lock":
-        ctypes.windll.user32.LockWorkStation()
+        plat.lock_screen()
         await msg.edit_text("🔒 Ekran qulflandi.", reply_markup=power_menu())
     elif act == "rec":
         await msg.edit_text(await start_recording(), reply_markup=power_menu())
@@ -863,7 +863,7 @@ async def on_power(callback: CallbackQuery):
     elif act == "status":
         await bot.send_message(msg.chat.id, build_status_text(), parse_mode="Markdown")
     elif act == "cancel":
-        subprocess.run(["shutdown", "/a"])
+        plat.cancel_shutdown()
         await msg.edit_text("✅ Rejalashtirilgan restart/shutdown bekor qilindi.", reply_markup=power_menu())
     await callback.answer()
 
@@ -916,8 +916,8 @@ async def on_restart(message: Message, command: CommandObject):
             parse_mode="Markdown",
         )
         return
-    subprocess.run(["shutdown", "/r", "/t", str(SHUTDOWN_DELAY_SECONDS)])
-    await message.answer(f"🔄 Qayta yuklash {SHUTDOWN_DELAY_SECONDS}s dan so'ng bo'ladi. Bekor qilish: /cancel")
+    plat.reboot(SHUTDOWN_DELAY_SECONDS)
+    await message.answer(f"🔄 Qayta yuklash ~1 daqiqada bo'ladi. Bekor qilish: /cancel")
 
 
 @dp.message(Command("shutdown"))
@@ -930,13 +930,13 @@ async def on_shutdown(message: Message, command: CommandObject):
             parse_mode="Markdown",
         )
         return
-    subprocess.run(["shutdown", "/s", "/t", str(SHUTDOWN_DELAY_SECONDS)])
-    await message.answer(f"🛑 O'chirish {SHUTDOWN_DELAY_SECONDS}s dan so'ng bo'ladi. Bekor qilish: /cancel")
+    plat.power_off(SHUTDOWN_DELAY_SECONDS)
+    await message.answer(f"🛑 O'chirish ~1 daqiqada bo'ladi. Bekor qilish: /cancel")
 
 
 @dp.message(Command("cancel"))
 async def on_cancel(message: Message):
-    subprocess.run(["shutdown", "/a"])
+    plat.cancel_shutdown()
     await message.answer("✅ Rejalashtirilgan restart/shutdown bekor qilindi (agar mavjud bo'lsa).")
 
 
@@ -1140,9 +1140,7 @@ async def notify_startup():
 
 
 def _find_claude_exe():
-    ext = Path.home() / ".vscode" / "extensions"
-    matches = sorted(ext.glob("anthropic.claude-code-*/resources/native-binary/claude.exe"))
-    return str(matches[-1]) if matches else None
+    return plat.find_claude()
 
 
 CLAUDE_EXE = _find_claude_exe()
@@ -1402,7 +1400,7 @@ async def on_open(message: Message, command: CommandObject):
         return
     url = arg if arg.startswith(("http://", "https://")) else "https://" + arg
     try:
-        os.startfile(url)
+        plat.open_path(url)
         await message.answer(f"🌐 Brauzerda ochilmoqda:\n{url}")
     except Exception as e:
         await message.answer(f"❌ Xato: {e}")
@@ -1424,11 +1422,7 @@ async def on_run(message: Message, command: CommandObject):
 @dp.message(Command("clip"))
 async def on_clip(message: Message):
     try:
-        out = subprocess.run(
-            ["powershell", "-NoProfile", "-Command", "Get-Clipboard -Raw"],
-            capture_output=True, text=True, timeout=10,
-        )
-        text = (out.stdout or "").strip()
+        text = plat.clip_get().strip()
         if not text:
             await message.answer("📋 Clipboard bo'sh yoki matn emas.")
         elif len(text) > 4000:
@@ -1449,7 +1443,7 @@ async def on_setclip(message: Message, command: CommandObject):
         await message.answer("Foydalanish: `/setclip yoziladigan matn`", parse_mode="Markdown")
         return
     try:
-        subprocess.run(["powershell", "-NoProfile", "-Command", "Set-Clipboard", "-Value", text], timeout=10)
+        plat.clip_set(text)
         await message.answer("✅ Kompyuter clipboard'iga yozildi.")
     except Exception as e:
         await message.answer(f"❌ Xato: {e}")
@@ -1486,7 +1480,8 @@ def _face_worker(loop, flag):
     except Exception:
         pass
     cap = None
-    for backend in (cv2.CAP_DSHOW, cv2.CAP_MSMF, None):
+    _backends = (getattr(cv2, "CAP_V4L2", None), None) if os.name != "nt" else (cv2.CAP_DSHOW, cv2.CAP_MSMF, None)
+    for backend in _backends:
         try:
             c = cv2.VideoCapture(0, backend) if backend is not None else cv2.VideoCapture(0)
             if c.isOpened():
@@ -1584,7 +1579,7 @@ def _dvr_worker(flag):
             # Ekran o'lchamini aniqlaymiz. Boot/qulf paytida ekran tayyor
             # bo'lmasligi mumkin — o'lchamni None qilib qayta urinamiz (thread o'lmaydi).
             if W is None:
-                ow, oh = ImageGrab.grab().size
+                ow, oh = plat.grab_pil().size
                 if ow > DVR_MAX_WIDTH:
                     sc = DVR_MAX_WIDTH / ow
                     W, H = DVR_MAX_WIDTH, int(oh * sc)
@@ -1601,7 +1596,7 @@ def _dvr_worker(flag):
             try:
                 while flag() and (time.time() - seg_start) < DVR_SEGMENT_SECONDS:
                     t0 = time.time()
-                    frame = np.array(ImageGrab.grab())
+                    frame = np.array(plat.grab_pil())
                     if (frame.shape[1], frame.shape[0]) != (W, H):
                         frame = cv2.resize(frame, (W, H))
                     writer.append_data(frame)
@@ -1723,8 +1718,10 @@ async def on_dvr(message: Message):
 
 
 # ── Avto-yozuv: har N daqiqada oxirgi yozuvni avtomatik yuborish ──
-# Default YONIQ — bot har safar ishga tushganda avtomatik yoziladi va yuboriladi.
-_autorec = {"on": True, "interval": 600}
+# Windows'da default YONIQ. Linux/Wayland'da ekran olish har safar portal
+# ruxsatini so'raydi, shuning uchun avto-yozuvni default O'CHIQ qilamiz
+# (RDP ekranni to'liq ko'rsatadi; kerak bo'lsa /dvr va /autorec bilan yoqiladi).
+_autorec = {"on": os.name == "nt", "interval": 600}
 
 
 async def autorec_worker():
@@ -1855,7 +1852,10 @@ async def main():
     await set_bot_commands()
     await notify_startup()
     await update_menu_button()
-    _dvr_start()
+    # Linux/Wayland: ekran olish portal ruxsatini so'raydi — DVR'ni avtomatik
+    # boshlamaymiz (aks holda ekranda takror "ulashish?" oynasi chiqaveradi).
+    if os.name == "nt":
+        _dvr_start()
     asyncio.create_task(periodic_broadcast())
     asyncio.create_task(periodic_alerts())
     asyncio.create_task(history_sampler())
