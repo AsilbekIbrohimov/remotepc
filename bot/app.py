@@ -112,8 +112,11 @@ USE_LOCAL_BOT_API = os.environ.get("USE_LOCAL_BOT_API", "").strip() in ("1", "tr
 LOCAL_BOT_API_URL = os.environ.get("LOCAL_BOT_API_URL", "http://127.0.0.1:8081").strip()
 MAX_TELEGRAM_FILE_BYTES = (2000 if USE_LOCAL_BOT_API else 50) * 1024 * 1024
 
+_DOWNLOADS_DIR = (Path.home() / "Downloads").resolve()
+
+
 def _build_watch_folders() -> list[Path]:
-    names = ["Desktop", "Documents", "Pictures", "Videos", "Music"]
+    names = ["Desktop", "Documents", "Pictures", "Videos", "Music", "Downloads"]
     roots = [Path.home()]
     one = os.environ.get("OneDrive") or os.environ.get("OneDriveConsumer")
     if one:
@@ -594,6 +597,13 @@ def is_excluded_path(path: Path) -> bool:
         return True
     if path.name.startswith(".") or path.name.startswith("~$"):
         return True
+    # Downloads: faqat bevosita ichidagi fayllar yuboriladi; ichki papka fayllari emas
+    try:
+        rp = path.resolve()
+        if _DOWNLOADS_DIR in rp.parents and rp.parent != _DOWNLOADS_DIR:
+            return True
+    except OSError:
+        pass
     return False
 
 
