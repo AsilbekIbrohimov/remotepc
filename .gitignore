@@ -50,3 +50,5 @@ miniapp_key.txt
 web_url.txt
 cloudflared.log
 cloudflared_out.log
+
+_split/

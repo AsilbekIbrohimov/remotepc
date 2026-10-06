@@ -614,6 +614,58 @@ _file_sent: dict[str, tuple[float, int]] = {}
 _BOT_START = time.time()
 
 
+SPLIT_PART_BYTES = 1950 * 1024 * 1024  # ~1.95GB (lokal Bot API 2GB limitidan past)
+_SPLIT_DIR = BASE_DIR / "_split"
+
+
+async def send_file_any_size(chat_id, path, caption=None, as_video=False, parse_mode="Markdown"):
+    """Istalgan kattalikdagi faylni yuboradi — 2GB dan katta bo'lsa bo'laklarga bo'lib."""
+    path = str(path)
+    size = os.path.getsize(path)
+    if size <= MAX_TELEGRAM_FILE_BYTES:
+        if as_video:
+            await bot.send_video(chat_id, FSInputFile(path), caption=caption, parse_mode=parse_mode)
+        else:
+            await bot.send_document(chat_id, FSInputFile(path), caption=caption, parse_mode=parse_mode)
+        return
+    import math
+    parts = math.ceil(size / SPLIT_PART_BYTES)
+    base = os.path.basename(path)
+    _SPLIT_DIR.mkdir(exist_ok=True)
+    await bot.send_message(
+        chat_id,
+        f"📦 {base}\n{size / (1024**3):.2f}GB — 2GB dan katta, {parts} qismga bo'linib yuboriladi...",
+    )
+    try:
+        with open(path, "rb") as f:
+            for i in range(1, parts + 1):
+                pname = f"{base}.part{i:03d}"
+                tmp = _SPLIT_DIR / pname
+                written = 0
+                with open(tmp, "wb") as out:
+                    while written < SPLIT_PART_BYTES:
+                        chunk = f.read(8 * 1024 * 1024)
+                        if not chunk:
+                            break
+                        out.write(chunk)
+                        written += len(chunk)
+                try:
+                    await bot.send_document(chat_id, FSInputFile(str(tmp)), caption=f"{base} — qism {i}/{parts}")
+                finally:
+                    try:
+                        os.remove(tmp)
+                    except OSError:
+                        pass
+        await bot.send_message(
+            chat_id,
+            f"✅ {parts} qism yuborildi. Birlashtirish:\n"
+            f"• Windows (CMD): copy /b {base}.part* {base}\n"
+            f"• Linux/Mac: cat {base}.part* > {base}",
+        )
+    except Exception as e:
+        await bot.send_message(chat_id, f"❌ Bo'laklab yuborishda xato: {e}")
+
+
 async def handle_new_file(path: Path, is_update: bool = False):
     key = str(path)
     stamp = time.time()
@@ -655,12 +707,7 @@ async def handle_new_file(path: Path, is_update: bool = False):
     caption = f"{label}\n📄 `{path}`\n📦 {size / (1024**2):.2f} MB"
     for chat_id in chats:
         try:
-            if size <= MAX_TELEGRAM_FILE_BYTES:
-                await bot.send_document(chat_id, FSInputFile(path), caption=caption, parse_mode="Markdown")
-            else:
-                await bot.send_message(
-                    chat_id, caption + "\n⚠️ Fayl 50MB dan katta, yubora olmayman.", parse_mode="Markdown"
-                )
+            await send_file_any_size(chat_id, path, caption=caption)
         except Exception as e:
             print(f"Fayl xabarini yuborishda xato ({chat_id}): {e}")
 
@@ -962,12 +1009,7 @@ async def on_getfile(message: Message, command: CommandObject):
         await message.answer("❌ Bunday fayl topilmadi.")
         return
 
-    size = path.stat().st_size
-    if size > MAX_TELEGRAM_FILE_BYTES:
-        await message.answer(f"❌ Fayl juda katta ({size // (1024**2)} MB). Limit: 50 MB.")
-        return
-
-    await message.answer_document(FSInputFile(path))
+    await send_file_any_size(message.chat.id, path, caption=None, parse_mode=None)
 
 
 @dp.message(Command("kill"))
