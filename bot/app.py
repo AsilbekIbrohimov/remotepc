@@ -58,6 +58,24 @@ if os.name == "nt":
 BASE_DIR = Path(__file__).resolve().parent.parent
 load_dotenv(BASE_DIR / ".env")
 
+
+def _data_dir() -> Path:
+    # Videolar (DVR, yozuvlar) OneDrive'ni to'ldirmasligi uchun — OneDrive'dan TASHQARI local papka
+    env = os.environ.get("REMOTE_DATA_DIR")
+    if env:
+        return Path(env)
+    la = os.environ.get("LOCALAPPDATA")
+    if la:
+        return Path(la) / "RemotePC"
+    return Path.home() / ".remotepc"
+
+
+DATA_DIR = _data_dir()
+try:
+    DATA_DIR.mkdir(parents=True, exist_ok=True)
+except OSError:
+    DATA_DIR = BASE_DIR  # zaxira
+
 BOT_TOKEN = os.environ["TG_BOT_TOKEN"]
 OWNER_ID = int(os.environ["TG_OWNER_ID"])
 WEB_APP_URL = os.environ.get("WEB_APP_URL", "https://example.com")
@@ -428,7 +446,7 @@ def _record_worker(path: str, flag):
 async def start_recording() -> str:
     if _rec["on"]:
         return "⚠️ Yozib olish allaqachon boshlangan. To'xtatish: /stop"
-    path = str(BASE_DIR / f"rec_{int(time.time())}.mp4")
+    path = str(DATA_DIR / f"rec_{int(time.time())}.mp4")
     _rec.update(on=True, path=path, start=time.time())
     _rec["thread"] = threading.Thread(target=_record_worker, args=(path, lambda: _rec["on"]), daemon=True)
     _rec["thread"].start()
@@ -615,7 +633,7 @@ _BOT_START = time.time()
 
 
 SPLIT_PART_BYTES = 1950 * 1024 * 1024  # ~1.95GB (lokal Bot API 2GB limitidan past)
-_SPLIT_DIR = BASE_DIR / "_split"
+_SPLIT_DIR = DATA_DIR / "_split"
 
 
 async def send_file_any_size(chat_id, path, caption=None, as_video=False, parse_mode="Markdown"):
@@ -1609,7 +1627,7 @@ async def on_stopface(message: Message):
 
 
 # ===== DVR: doimiy yozib borish (oxirgi 10 daqiqa) =====
-DVR_DIR = BASE_DIR / "dvr"
+DVR_DIR = DATA_DIR / "dvr"
 DVR_FPS = 8
 DVR_MAX_WIDTH = 1280
 DVR_SEGMENT_SECONDS = 30
@@ -1691,7 +1709,7 @@ def _dvr_compile(minutes: int = 10):
         segs = segs[:-1]
     if not segs:
         return None
-    out = str(BASE_DIR / f"lastrec_{int(now)}.mp4")
+    out = str(DATA_DIR / f"lastrec_{int(now)}.mp4")
     list_path = str(DVR_DIR / "concat_list.txt")
     with open(list_path, "w", encoding="utf-8") as lf:
         for _, f in segs:
