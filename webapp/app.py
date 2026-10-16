@@ -507,17 +507,15 @@ html,body { height:100%; background:#000; color:#fff; font-family:-apple-system,
 #app { display:flex; flex-direction:column; height:100%; }
 #video { flex:0 0 auto; position:relative; background:#000; overflow:hidden; touch-action:none; min-height:170px; }
 #screenshot { display:block; width:100%; height:auto; transform-origin:0 0; }
-#fps { position:absolute; top:8px; left:8px; background:rgba(0,0,0,0.55); color:#0f0; font-size:11px; font-family:monospace; padding:3px 7px; border-radius:5px; z-index:20; }
+#fps { position:absolute; left:8px; bottom:8px; background:rgba(0,0,0,0.5); color:#2fbf60; font-size:10px; font-family:monospace; padding:2px 6px; border-radius:5px; z-index:20; opacity:.85; }
 #status { position:absolute; top:50%; left:50%; transform:translate(-50%,-50%); font-size:14px; color:#888; text-align:center; z-index:15; }
 .loading { animation:pulse 1.5s infinite; } .error{ color:#f55; }
 @keyframes pulse { 0%,100%{opacity:.5} 50%{opacity:1} }
-#ztoggle { position:absolute; right:8px; top:8px; width:38px; height:38px; border-radius:50%; border:none; background:rgba(0,0,0,0.55); color:#fff; font-size:20px; z-index:21; }
-#fullbtn { position:absolute; right:52px; top:8px; width:38px; height:38px; border-radius:50%; border:none; background:rgba(0,0,0,0.55); color:#fff; font-size:18px; z-index:21; }
-#fullbtn.active { background:#2fbf60; box-shadow:0 0 0 2px #2fbf60; }
-#fsbtn { position:absolute; right:96px; top:8px; width:38px; height:38px; border-radius:50%; border:none; background:rgba(0,0,0,0.55); color:#fff; font-size:18px; z-index:21; }
-#zoomctl { position:absolute; right:8px; top:52px; display:flex; flex-direction:column; gap:6px; z-index:20; }
-#zoomctl.collapsed { display:none; }
-#zoomctl button, #gear { width:38px; height:38px; border-radius:50%; border:none; background:rgba(0,0,0,0.55); color:#fff; font-size:18px; font-weight:bold; }
+#toolbar { display:flex; align-items:center; gap:6px; padding:7px 8px; background:#141414; border-top:1px solid #242424; flex:0 0 auto; overflow-x:auto; }
+#toolbar button { flex:0 0 auto; width:44px; height:40px; border:none; border-radius:10px; background:#262626; color:#fff; font-size:17px; }
+#toolbar button:active { background:#3a3a3a; }
+#toolbar button.active { background:#2fbf60; color:#04220f; }
+#toolbar .sep { flex:0 0 auto; width:1px; height:22px; background:#333; }
 #zoomlevel { position:absolute; right:8px; bottom:8px; background:rgba(0,0,0,0.55); color:#0f0; font-size:11px; padding:3px 7px; border-radius:5px; z-index:20; }
 #panel { position:fixed; right:10px; top:56px; width:220px; background:rgba(20,20,20,0.98); border:1px solid #555; border-radius:12px; padding:14px; z-index:200; display:none; box-shadow:0 8px 30px rgba(0,0,0,0.6); }
 #panel h4 { font-size:13px; color:#0f0; margin-bottom:6px; }
@@ -585,17 +583,8 @@ html,body { height:100%; background:#000; color:#fff; font-family:-apple-system,
 <div id="app">
   <div id="video">
     <img id="screenshot" src="" style="display:none;">
-    <div id="fps">— FPS</div>
     <div id="status" class="loading">⏳ Ulanmoqda...</div>
-    <button id="ztoggle">⌄</button>
-    <button id="fullbtn" title="To'liq boshqaruv (AnyDesk rejimi)">🖥️</button>
-    <button id="fsbtn" title="Butun ekran">⛶</button>
-    <div id="zoomctl" class="collapsed">
-      <button id="gear">⚙</button>
-      <button id="zin">+</button>
-      <button id="zout">−</button>
-      <button id="zreset">⟲</button>
-    </div>
+    <div id="fps">— FPS</div>
     <div id="zoomlevel" style="display:none;">1.0x</div>
     <div id="panel">
       <h4>Sozlamalar <span id="panelClose" style="float:right;cursor:pointer;color:#f55;">✕</span></h4>
@@ -617,6 +606,17 @@ html,body { height:100%; background:#000; color:#fff; font-family:-apple-system,
     </div>
   </div>
   <div id="controls">
+    <div id="toolbar">
+      <button id="fullbtn" title="To'liq boshqaruv (AnyDesk)">🖥️</button>
+      <span class="sep"></span>
+      <button id="zin" title="Kattalashtirish">➕</button>
+      <button id="zout" title="Kichraytirish">➖</button>
+      <button id="zreset" title="Zoom qayta">⟲</button>
+      <span class="sep"></span>
+      <button id="fsbtn" title="Butun ekran">⛶</button>
+      <button id="btnFiles" title="Fayllar">📁</button>
+      <button id="gear" title="Video sozlama">⚙️</button>
+    </div>
     <div id="tabs">
       <button class="tab active" data-tab="mouse">🖱️</button>
       <button class="tab" data-tab="keys">⌨️</button>
@@ -682,8 +682,6 @@ html,body { height:100%; background:#000; color:#fff; font-family:-apple-system,
         <button data-combo="win+e">📁 Explorer</button>
         <button data-combo="win+l">🔒 Qulflash</button>
         <button id="btnLand">⛶ Landscape</button>
-        <button id="btnFiles">📁 Fayllar</button>
-        <button id="btnSettings">⚙️ Video sozlama</button>
       </div>
     </div>
   </div>
@@ -833,11 +831,7 @@ function resetZoom(){ scale=1;tx=0;ty=0; applyT(); }
 document.getElementById('zin').onclick=function(){var r=videoEl.getBoundingClientRect();zoomAt(r.left+r.width/2,r.top+r.height/2,1.4);};
 document.getElementById('zout').onclick=function(){var r=videoEl.getBoundingClientRect();zoomAt(r.left+r.width/2,r.top+r.height/2,1/1.4);};
 document.getElementById('zreset').onclick=resetZoom;
-var ztoggle=document.getElementById('ztoggle'), zoomctl=document.getElementById('zoomctl');
-ztoggle.onclick=function(){
-  var open=zoomctl.classList.toggle('collapsed')===false;
-  ztoggle.textContent = open ? '⌃' : '⌄';
-};
+
 
 var clickMode='left'; // left | right | double
 function sendClick(cx,cy){
@@ -1036,7 +1030,6 @@ function setLandscape(on){
 }
 var btnLand=document.getElementById('btnLand');
 btnLand.onclick=function(){ setLandscape(!landOn); btnLand.textContent=landOn?'⛶ Portret':'⛶ Landscape'; btnLand.classList.toggle('active',landOn); };
-document.getElementById('btnSettings').onclick=togglePanel;
 
 // ===== FAYL MENEJERI =====
 var fm=document.getElementById('fm'), fmpath=document.getElementById('fmpath'), fmlist=document.getElementById('fmlist');
