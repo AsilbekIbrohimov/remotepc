@@ -9,8 +9,9 @@ while ($true) {
   Get-Process cloudflared -ErrorAction SilentlyContinue | Stop-Process -Force
   Start-Sleep -Seconds 2
   Remove-Item $log -ErrorAction SilentlyContinue
+  # --protocol http2: UDP/QUIC bloklangan tarmoqlarda ishonchli (ISP UDP'ni to'sadi)
   Start-Process -FilePath $exe -WindowStyle Hidden `
-    -ArgumentList 'tunnel','--url','http://localhost:8765','--no-autoupdate' `
+    -ArgumentList 'tunnel','--url','http://localhost:8765','--no-autoupdate','--protocol','http2' `
     -RedirectStandardError $log -RedirectStandardOutput "$dir\cloudflared_out.log"
 
   # trycloudflare havolasini kutamiz
