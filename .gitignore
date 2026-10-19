@@ -1,5 +1,4 @@
 # Secrets — HECH QACHON commit qilinmaydi
-.env
 *.session
 *.session-journal
 
