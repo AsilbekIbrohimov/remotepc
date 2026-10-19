@@ -823,6 +823,91 @@ async def on_lock(message: Message):
     await message.answer("🔒 Ekran qulflandi.")
 
 
+# ── Qulflanmaslik rejimi (Windows qulf ekranini chetlab o'tish) ──
+_nolock = {"on": False, "thread": None}
+
+
+def _set_disable_lock(disable: bool) -> None:
+    if os.name != "nt":
+        return
+    try:
+        import winreg
+        k = winreg.CreateKey(winreg.HKEY_CURRENT_USER,
+                             r"Software\Microsoft\Windows\CurrentVersion\Policies\System")
+        winreg.SetValueEx(k, "DisableLockWorkstation", 0, winreg.REG_DWORD, 1 if disable else 0)
+        winreg.CloseKey(k)
+    except Exception as e:
+        print(f"disable lock xato: {e}")
+
+
+def _keepawake_worker(flag) -> None:
+    # CONTINUOUS|SYSTEM (DISPLAY emas) -> tizim uxlamaydi, lekin ekran o'chsa bo'ladi (eng yengil)
+    ES = 0x80000000 | 0x00000001
+    while flag():
+        try:
+            if os.name == "nt":
+                ctypes.windll.kernel32.SetThreadExecutionState(ES)
+        except Exception:
+            pass
+        time.sleep(30)
+    try:
+        if os.name == "nt":
+            ctypes.windll.kernel32.SetThreadExecutionState(0x80000000)
+    except Exception:
+        pass
+
+
+def _set_power_nolock(on: bool) -> None:
+    """Lid yopilganda/idle da uxlamaslik + qulflamaslik (powercfg)."""
+    if os.name != "nt":
+        return
+    SUB_BUTTONS = "4f971e89-eebd-4455-a8de-9e59040e7347"
+    LIDACTION = "5ca83367-6e45-459f-a27b-476b1d01c936"
+    lid = "0" if on else "1"          # 0=hech narsa, 1=uxlash
+    standby = "0" if on else "30"     # 0=hech qachon
+    cmds = [
+        ["powercfg", "/change", "standby-timeout-ac", standby],
+        ["powercfg", "/change", "standby-timeout-dc", standby],
+        ["powercfg", "/change", "hibernate-timeout-ac", "0" if on else "60"],
+        ["powercfg", "/change", "hibernate-timeout-dc", "0" if on else "60"],
+        ["powercfg", "/setacvalueindex", "SCHEME_CURRENT", SUB_BUTTONS, LIDACTION, lid],
+        ["powercfg", "/setdcvalueindex", "SCHEME_CURRENT", SUB_BUTTONS, LIDACTION, lid],
+        ["powercfg", "/setactive", "SCHEME_CURRENT"],
+    ]
+    for c in cmds:
+        try:
+            subprocess.run(c, capture_output=True, timeout=10)
+        except Exception as e:
+            print(f"powercfg xato: {e}")
+
+
+@dp.message(Command("nolock"))
+async def on_nolock(message: Message):
+    if _nolock["on"]:
+        _nolock["on"] = False
+        _set_disable_lock(False)
+        _set_power_nolock(False)
+        await message.answer("🔓 Qulflanmaslik rejimi O'CHIRILDI — PC endi odatdagidek qulflanadi/uxlaydi.")
+    else:
+        _nolock["on"] = True
+        _set_disable_lock(True)
+        _set_power_nolock(True)
+        _nolock["thread"] = threading.Thread(
+            target=_keepawake_worker, args=(lambda: _nolock["on"],), daemon=True)
+        _nolock["thread"].start()
+        await message.answer(
+            "🔒➡️🔓 *Qulflanmaslik / uxlamaslik rejimi YONIQ*\n"
+            "• Win+L va avtomat qulf o'chirildi\n"
+            "• Qopqoq (lid) yopilsa — hech narsa bo'lmaydi\n"
+            "• Uyqu/gibernatsiya o'chirildi\n"
+            "• Ekran o'chsa bo'ladi (eng yengil rejim) — tizim ishlab turadi\n\n"
+            "⚠️ PC endi qulflanmaydi (yonidagi har kim kira oladi).\n"
+            "Hozir qulflangan bo'lsa — bir marta qo'lda oching.\n"
+            "O'chirish: /nolock",
+            parse_mode="Markdown",
+        )
+
+
 @dp.message(Command("graph"))
 @dp.message(F.text == "📈 Grafik")
 async def on_graph(message: Message):
@@ -1196,6 +1281,7 @@ async def set_bot_commands():
         BotCommand(command="lastrec", description="Oxirgi 10 daqiqa ekran yozuvini olish"),
         BotCommand(command="dvr", description="Doimiy yozib borishni yoqish/o'chirish"),
         BotCommand(command="autorec", description="Avto: har N daqiqada yozuvni yuborish (/autorec 10)"),
+        BotCommand(command="nolock", description="Qulflanmaslik/uxlamaslik rejimi (lid yopilsa ham)"),
         BotCommand(command="uzish", description="Barcha masofaviy ulanishlarni uzish"),
     ])
 
