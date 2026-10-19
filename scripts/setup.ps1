@@ -1,11 +1,11 @@
-# Remote PC Monitor — GitHub'dan tiklashdan keyin TO'LIQ avtomat sozlash (Windows)
+# Remote PC Monitor - GitHub'dan tiklashdan keyin TO'LIQ avtomat sozlash (Windows)
 # Ishga tushirish:  powershell -ExecutionPolicy Bypass -File scripts\setup.ps1
 $ErrorActionPreference = "Continue"
 [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
 $ProgressPreference = "SilentlyContinue"
 $root = Split-Path $PSScriptRoot -Parent
 Set-Location $root
-Write-Host "=== Remote PC Monitor — sozlash ===" -ForegroundColor Cyan
+Write-Host "=== Remote PC Monitor - sozlash ===" -ForegroundColor Cyan
 Write-Host "Loyiha: $root"
 
 # --- Python topish (qattiq kodsiz) ---
@@ -14,7 +14,7 @@ if (-not $py) {
   $cand = Get-ChildItem "$env:LOCALAPPDATA\Programs\Python\Python3*\python.exe" -ErrorAction SilentlyContinue | Select-Object -Last 1
   if ($cand) { $py = $cand.FullName }
 }
-if (-not $py -or -not (Test-Path $py)) { Write-Host "Python topilmadi — python.org dan 3.12+ o'rnating, keyin qayta ishga tushiring" -ForegroundColor Red; exit 1 }
+if (-not $py -or -not (Test-Path $py)) { Write-Host "Python topilmadi - python.org dan 3.12+ o'rnating, keyin qayta ishga tushiring" -ForegroundColor Red; exit 1 }
 $pyw = $py -replace 'python\.exe$', 'pythonw.exe'
 if (-not (Test-Path $pyw)) { $pyw = $py }
 Write-Host "Python: $py"
@@ -59,18 +59,19 @@ New-Item -ItemType Directory -Force "$env:LOCALAPPDATA\RemotePC\dvr" | Out-Null
 
 # --- 5) startup.vbs ni SHU mashina yo'llari bilan yaratish ---
 Write-Host "`n[5/6] Avtostart (yo'llar shu mashinaga moslanadi)..." -ForegroundColor Yellow
-$vbs = @"
-' Remote PC Monitor - oynasiz avtostart (setup.ps1 yaratgan)
-Set sh = CreateObject("WScript.Shell")
-base = "$root\"
-py = "$pyw"
-sh.CurrentDirectory = base
-sh.Run "powershell -WindowStyle Hidden -ExecutionPolicy Bypass -File """ & base & "scripts\keep_botapi.ps1""", 0, False
-sh.Run """" & py & """ """ & base & "web_server.py""", 0, False
-WScript.Sleep 10000
-sh.Run """" & py & """ """ & base & "monitor_bot.py""", 0, False
-sh.Run "powershell -WindowStyle Hidden -ExecutionPolicy Bypass -File """ & base & "scripts\keep_cloudflared.ps1""", 0, False
-"@
+$lines = @(
+  "' Remote PC Monitor - oynasiz avtostart (setup.ps1 yaratgan)",
+  'Set sh = CreateObject("WScript.Shell")',
+  ('base = "' + $root + '\"'),
+  ('py = "' + $pyw + '"'),
+  'sh.CurrentDirectory = base',
+  'sh.Run "powershell -WindowStyle Hidden -ExecutionPolicy Bypass -File """ & base & "scripts\keep_botapi.ps1""", 0, False',
+  'sh.Run """" & py & """ """ & base & "web_server.py""", 0, False',
+  'WScript.Sleep 10000',
+  'sh.Run """" & py & """ """ & base & "monitor_bot.py""", 0, False',
+  'sh.Run "powershell -WindowStyle Hidden -ExecutionPolicy Bypass -File """ & base & "scripts\keep_cloudflared.ps1""", 0, False'
+)
+$vbs = $lines -join "`r`n"
 $startupDir = "$env:APPDATA\Microsoft\Windows\Start Menu\Programs\Startup"
 $vbsPath = "$startupDir\TelegramPCMonitorBot.vbs"
 Set-Content -Path $vbsPath -Value $vbs -Encoding ascii
@@ -88,7 +89,7 @@ if (Test-Path "$root\.env") {
   Start-Process "wscript.exe" $vbsPath
   Write-Host "  ishga tushirildi (~30-60s da tayyor bo'ladi)"
 } else {
-  Write-Host "  .env YO'Q — avval .env.example dan nusxalab to'ldiring, keyin vbs ni bosing" -ForegroundColor Red
+  Write-Host "  .env YO'Q - avval .env.example dan nusxalab to'ldiring, keyin vbs ni bosing" -ForegroundColor Red
 }
 
 Write-Host "`n=== TAYYOR ===" -ForegroundColor Green
