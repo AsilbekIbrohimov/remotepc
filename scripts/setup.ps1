@@ -8,13 +8,36 @@ Set-Location $root
 Write-Host "=== Remote PC Monitor - sozlash ===" -ForegroundColor Cyan
 Write-Host "Loyiha: $root"
 
-# --- Python topish (qattiq kodsiz) ---
-$py = (Get-Command python -ErrorAction SilentlyContinue).Source
-if (-not $py) {
-  $cand = Get-ChildItem "$env:LOCALAPPDATA\Programs\Python\Python3*\python.exe" -ErrorAction SilentlyContinue | Select-Object -Last 1
-  if ($cand) { $py = $cand.FullName }
+# --- Python topish (bo'lmasa O'ZI o'rnatadi) ---
+function Find-Python {
+  $p = (Get-Command python -ErrorAction SilentlyContinue).Source
+  if ($p -and ($p -notlike '*WindowsApps*')) { return $p }
+  $c = Get-ChildItem "$env:LOCALAPPDATA\Programs\Python\Python3*\python.exe", "$env:ProgramFiles\Python3*\python.exe" -ErrorAction SilentlyContinue | Select-Object -Last 1
+  if ($c) { return $c.FullName }
+  return $null
 }
-if (-not $py -or -not (Test-Path $py)) { Write-Host "Python topilmadi - python.org dan 3.12+ o'rnating, keyin qayta ishga tushiring" -ForegroundColor Red; exit 1 }
+$py = Find-Python
+if (-not $py) {
+  Write-Host "Python topilmadi - o'rnatilmoqda..." -ForegroundColor Yellow
+  # 1) winget orqali (bo'lsa)
+  if (Get-Command winget -ErrorAction SilentlyContinue) {
+    try { winget install -e --id Python.Python.3.12 --silent --accept-package-agreements --accept-source-agreements } catch {}
+  }
+  $py = Find-Python
+  # 2) winget bo'lmasa/ishlamasa - python.org installer
+  if (-not $py) {
+    $inst = "$env:TEMP\python-setup.exe"
+    try {
+      Invoke-WebRequest "https://www.python.org/ftp/python/3.12.7/python-3.12.7-amd64.exe" -OutFile $inst -TimeoutSec 300
+      Write-Host "  o'rnatilmoqda (jim rejim)..."
+      Start-Process $inst -ArgumentList "/quiet", "InstallAllUsers=0", "PrependPath=1", "Include_pip=1", "Include_launcher=1" -Wait
+      Remove-Item $inst -Force -ErrorAction SilentlyContinue
+    } catch { Write-Host "  Python yuklanmadi - python.org dan qo'lda o'rnating (WARP yoqib)" -ForegroundColor Red; exit 1 }
+  }
+  $py = Find-Python
+  if (-not $py) { Write-Host "Python o'rnatildi, lekin PATH hali yangilanmagan. PowerShell'ni YOPIB qayta oching va setup.ps1 ni qayta ishga tushiring." -ForegroundColor Yellow; exit 0 }
+  Write-Host "  Python o'rnatildi: $py" -ForegroundColor Green
+}
 $pyw = $py -replace 'python\.exe$', 'pythonw.exe'
 if (-not (Test-Path $pyw)) { $pyw = $py }
 Write-Host "Python: $py"
