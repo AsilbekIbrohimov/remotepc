@@ -267,8 +267,8 @@ html,body{height:100%;background:#000;color:#fff;overflow:hidden;overscroll-beha
     <div class="grow"><div class="gic">👆</div><div class="gtx">Ikki marta bosib, qo'yib yubormasdan suring — <b>ushlab tortish</b> yoki matn belgilash.</div></div>
     <div class="grow"><div class="gic">⏱️</div><div class="gtx">Bosib <b>ushlab turing</b> — o'ng klik.</div></div>
     <h5>Kattalashtirilganda</h5>
-    <div class="grow"><div class="gic">🔍</div><div class="gtx">Bir barmoq surilsa <b>tasvir suriladi</b> — kursor joyida qoladi. Shunday qilib chetlarga ham yetib borasiz.</div></div>
-    <div class="grow"><div class="gic">🎯</div><div class="gtx">Bosilsa <b>aynan o'sha nuqtaga</b> klik tushadi.</div></div>
+    <div class="grow"><div class="gic">🔍</div><div class="gtx">Kursor odatdagidek suriladi, <b>tasvir esa uning ortidan ergashadi</b> — kursor chetga borganda ekran o'zi siljiydi, qolib ketmaydi.</div></div>
+    <div class="grow"><div class="gic">🎯</div><div class="gtx">Kattalashtirilganda kursor <b>sekinroq</b> yuradi — nozik ishlar uchun aniqlik oshadi.</div></div>
     <div class="grow"><div class="gic">⟲</div><div class="gtx">Ikki barmoq bilan teskari chimdisangiz asliga qaytadi.</div></div>
 
     <h5>Klaviatura</h5>
@@ -446,6 +446,12 @@ function wsConnect(){
     var proto = location.protocol === 'https:' ? 'wss:' : 'ws:';
     ws = new WebSocket(proto + '//' + location.host + '/api/ws?user_id=' + userId + authQS());
     ws.onopen = function(){ wsReady = true; };
+    ws.onmessage = function(ev){
+      try {
+        var d = JSON.parse(ev.data);
+        if (d && d.c){ rcur = d.c; followCursor(); }
+      } catch(e){}
+    };
     ws.onclose = function(){ wsReady = false; setTimeout(wsConnect, 1500); };
     ws.onerror = function(){ try { ws.close(); } catch(e){} };
   } catch(e){}
@@ -539,8 +545,26 @@ function moveTo(cx, cy){
   if (m) ctrl({a:'move', x:m.x, y:m.y});
 }
 function clearLong(){ if (longT){ clearTimeout(longT); longT = null; } }
-// Kattalashtirilganda ham "to'g'ridan" rejimdagidek aniq nuqtaga ishlaymiz
-function absMode(){ return MODE === 'direct' || scale > 1.01; }
+function absMode(){ return MODE === 'direct'; }
+
+/* Kursor serverdan keladi (WebSocket) — kattalashtirilganda tasvir uning
+   ortidan ergashadi, shunda kursor chetga chiqib ko'rinmay qolmaydi. */
+var rcur = null;
+function followCursor(){
+  if (scale <= 1.01 || !rcur) return;
+  var vw = videoEl.clientWidth, vh = videoEl.clientHeight;
+  var ow = img.offsetWidth, oh = img.offsetHeight;
+  if (!ow || !oh) return;
+  var px = img.offsetLeft + tx + rcur[0] * ow * scale;   // kursorning ekrandagi o'rni
+  var py = img.offsetTop + ty + rcur[1] * oh * scale;
+  var mx = Math.min(vw * 0.3, 110), my = Math.min(vh * 0.3, 110);  // chet zonasi
+  var px0 = tx, py0 = ty;
+  if (px < mx) tx += (mx - px);
+  else if (px > vw - mx) tx -= (px - (vw - mx));
+  if (py < my) ty += (my - py);
+  else if (py > vh - my) ty -= (py - (vh - my));
+  if (tx !== px0 || ty !== py0){ clampPan(); applyT(); }
+}
 
 videoEl.addEventListener('pointerdown', function(e){
   if (inUI(e.target)) return;
@@ -621,16 +645,11 @@ videoEl.addEventListener('pointermove', function(e){
     toast('Ushlab tortish');
   }
 
-  // KATTALASHTIRILGAN HOLAT: barmoq tasvirni suradi, kursor joyida qoladi.
-  // (Aks holda chetlarga umuman yetib bo'lmaydi.)
-  if (scale > 1.01){
-    if (dragOn){ moveTo(e.clientX, e.clientY); }
-    else if (panning){ tx += dx; ty += dy; clampPan(); applyT(); }
-    return;
-  }
   if (MODE === 'direct'){ moveTo(e.clientX, e.clientY); return; }
-  // trackpad: nisbiy siljish
-  accX += dx * SENS; accY += dy * SENS;
+  // trackpad: nisbiy siljish. Kattalashtirilganda tezlikni masshtabga bo'lamiz —
+  // shunda kursor ekranda barmoq bilan bir xil tezlikda yuradi (aniqlik oshadi).
+  var k = SENS / Math.max(1, scale);
+  accX += dx * k; accY += dy * k;
 });
 
 // Kursor siljishini kadr tezligida yuboramiz (35ms -> ~16ms: sezilarli silliqroq)

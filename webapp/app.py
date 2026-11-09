@@ -466,6 +466,27 @@ async def control_api(request: web.Request) -> web.Response:
     return _cors(web.json_response({"ok": True}))
 
 
+async def _cursor_pusher(ws: web.WebSocketResponse) -> None:
+    """Kursor o'rnini mijozga uzatadi — kattalashtirilganda tasvir uning ortidan ergashsin."""
+    last = None
+    try:
+        while not ws.closed:
+            try:
+                pt = _POINT()
+                _user32.GetCursorPos(ctypes.byref(pt))
+                ox, oy, w, h = _capture_bounds()
+                if w and h:
+                    cur = (round((pt.x - ox) / w, 4), round((pt.y - oy) / h, 4))
+                    if cur != last:
+                        last = cur
+                        await ws.send_str(json.dumps({"c": cur}))
+            except Exception:
+                pass
+            await asyncio.sleep(0.05)
+    except (asyncio.CancelledError, ConnectionError):
+        pass
+
+
 async def ws_api(request: web.Request) -> web.WebSocketResponse:
     # heartbeat: o'lik ulanish (tunnel uzilsa) 20s ichida aniqlanadi va yopiladi,
     # mijoz esa darhol qayta ulanadi — boshqaruv "osilib" qolmaydi.
@@ -475,20 +496,24 @@ async def ws_api(request: web.Request) -> web.WebSocketResponse:
         await ws.close()
         return ws
     last_check = time.time()
-    async for msg in ws:
-        # Har ~2s da ruxsatni qayta tekshiramiz — egasi uzsa boshqaruv darhol to'xtaydi
-        if time.time() - last_check > 2:
-            last_check = time.time()
-            if not _auth_ok(request):
+    pusher = asyncio.create_task(_cursor_pusher(ws))
+    try:
+        async for msg in ws:
+            # Har ~2s da ruxsatni qayta tekshiramiz — egasi uzsa boshqaruv darhol to'xtaydi
+            if time.time() - last_check > 2:
+                last_check = time.time()
+                if not _auth_ok(request):
+                    break
+            if msg.type == web.WSMsgType.TEXT:
+                try:
+                    d = json.loads(msg.data)
+                    _do_action(d.get("a", ""), lambda k, dv=None: d.get(k, dv))
+                except Exception:
+                    pass
+            elif msg.type == web.WSMsgType.ERROR:
                 break
-        if msg.type == web.WSMsgType.TEXT:
-            try:
-                d = json.loads(msg.data)
-                _do_action(d.get("a", ""), lambda k, dv=None: d.get(k, dv))
-            except Exception:
-                pass
-        elif msg.type == web.WSMsgType.ERROR:
-            break
+    finally:
+        pusher.cancel()
     await ws.close()
     return ws
 
