@@ -1,0 +1,939 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">
+<title>PC Remote</title>
+<script src="https://telegram.org/js/telegram-web-app.js"></script>
+<style>
+*{margin:0;padding:0;box-sizing:border-box;-webkit-user-select:none;user-select:none;-webkit-tap-highlight-color:transparent}
+html,body{height:100%;background:#000;color:#fff;overflow:hidden;overscroll-behavior:none;
+  font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif}
+#app{position:fixed;inset:0;display:flex;flex-direction:column}
+
+/* ===== EKRAN (butun sath = sensor) ===== */
+#video{flex:1;position:relative;overflow:hidden;touch-action:none;background:#000;
+  display:flex;align-items:center;justify-content:center;min-height:0}
+#screenshot{max-width:100%;max-height:100%;width:auto;height:auto;display:block;transform-origin:0 0}
+#status{position:absolute;top:50%;left:50%;transform:translate(-50%,-50%);font-size:14px;color:#888;text-align:center}
+.loading{animation:pulse 1.5s infinite}.error{color:#f55}
+@keyframes pulse{0%,100%{opacity:.45}50%{opacity:1}}
+
+/* HUD */
+.hud{position:absolute;z-index:20;font-size:11px;font-family:ui-monospace,monospace;
+  background:rgba(0,0,0,.55);padding:3px 7px;border-radius:6px;pointer-events:none;opacity:.9}
+#fps{left:8px;bottom:8px;color:#2fbf60}
+#zoomlevel{right:8px;bottom:8px;color:#5aa9ff;display:none}
+#toast{left:50%;top:14px;transform:translateX(-50%);color:#fff;background:rgba(20,20,24,.92);
+  font-size:13px;padding:7px 14px;border-radius:999px;opacity:0;transition:opacity .2s;font-family:inherit}
+#toast.on{opacity:1}
+#ripple{position:absolute;width:40px;height:40px;margin:-20px 0 0 -20px;border-radius:50%;
+  border:2px solid rgba(255,255,255,.85);opacity:0;pointer-events:none;z-index:25}
+#ripple.go{animation:rip .4s ease-out}
+@keyframes rip{from{opacity:.9;transform:scale(.35)}to{opacity:0;transform:scale(1.25)}}
+
+/* Suzuvchi yuqori tugmalar */
+#topright{position:absolute;right:8px;top:8px;z-index:30;display:flex;gap:6px}
+#topright button{width:38px;height:38px;border:none;border-radius:10px;font-size:16px;
+  background:rgba(22,22,26,.72);color:#fff;backdrop-filter:blur(6px)}
+#topright button:active{background:rgba(60,60,70,.9)}
+
+/* ===== PASTKI PANEL ===== */
+#bar{flex:0 0 auto;display:flex;align-items:center;gap:4px;padding:6px 8px;
+  padding-bottom:calc(6px + env(safe-area-inset-bottom));background:#111;border-top:1px solid #222}
+#bar button{flex:1;height:46px;border:none;border-radius:11px;background:#232328;color:#fff;
+  font-size:17px;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:1px}
+#bar button:active{background:#35353e}
+#bar button.active{background:#2fbf60;color:#04220f}
+#bar button .lbl{font-size:9px;letter-spacing:.3px;opacity:.85}
+
+/* ===== KO'TARILUVCHI VARAQ ===== */
+#sheet{position:fixed;left:0;right:0;bottom:0;z-index:120;background:#15151a;
+  border-top-left-radius:16px;border-top-right-radius:16px;border-top:1px solid #2a2a32;
+  transform:translateY(100%);transition:transform .22s ease;max-height:62%;display:flex;flex-direction:column;
+  padding-bottom:env(safe-area-inset-bottom)}
+#sheet.open{transform:translateY(0)}
+#sheetgrip{flex:0 0 auto;padding:7px 0 3px;display:flex;justify-content:center}
+#sheetgrip i{width:38px;height:4px;border-radius:2px;background:#3d3d47;display:block}
+#tabs{flex:0 0 auto;display:flex;border-bottom:1px solid #26262e}
+#tabs .tab{flex:1;padding:9px 2px;font-size:15px;border:none;background:transparent;color:#7d7d88;
+  border-bottom:2px solid transparent}
+#tabs .tab.active{color:#fff;border-bottom-color:#2fbf60}
+#panes{flex:1;overflow-y:auto;-webkit-overflow-scrolling:touch;min-height:0}
+.pane{display:flex;flex-wrap:wrap;align-content:flex-start;gap:7px;padding:10px}
+.pane[hidden]{display:none}
+.pane button{flex:1 1 auto;min-width:72px;max-width:calc(50% - 4px);padding:13px 8px;font-size:14px;
+  border:none;border-radius:11px;background:#2a2a31;color:#fff;white-space:nowrap}
+.pane button:active{background:#3a3a44}
+.pane button.wide{flex-basis:100%;max-width:100%}
+.section{flex-basis:100%;font-size:10px;color:#6a6a76;margin:7px 2px 0;text-transform:uppercase;
+  letter-spacing:1.4px;font-weight:700}
+.dpad{flex-basis:100%;display:grid;grid-template-columns:repeat(3,58px);grid-template-rows:repeat(3,44px);
+  gap:6px;justify-content:center;margin:3px 0}
+.dpad button{min-width:0;max-width:none;padding:0;font-size:17px}
+.dpad .u{grid-column:2;grid-row:1}.dpad .l{grid-column:1;grid-row:2}
+.dpad .r{grid-column:3;grid-row:2}.dpad .d{grid-column:2;grid-row:3}
+.dpad .c{grid-column:2;grid-row:2;background:#141418;color:#44444c;pointer-events:none}
+
+/* Klaviatura qatori */
+#kbrow{display:flex;gap:6px;flex-basis:100%}
+#kbrow input{flex:1;padding:12px;border-radius:10px;border:1px solid #3a3a44;background:#202026;
+  color:#fff;font-size:15px}
+#kbrow button{flex:0 0 auto;width:48px;padding:0;font-size:15px}
+.kbhint{flex-basis:100%;font-size:11px;color:#6a6a76;line-height:1.5}
+
+/* Slayderlar */
+.row{flex-basis:100%;display:flex;align-items:center;gap:10px;padding:2px}
+.row label{font-size:12px;color:#aaa;flex:0 0 88px}
+.row input[type=range]{flex:1}
+.row .val{font-size:12px;color:#2fbf60;flex:0 0 46px;text-align:right;font-family:ui-monospace,monospace}
+
+/* ===== YORDAM (jestlar jadvali) ===== */
+#help{position:fixed;inset:0;z-index:300;background:#fff;color:#1a1a1a;display:none;flex-direction:column}
+#help.open{display:flex}
+#helpbar{flex:0 0 auto;display:flex;align-items:center;gap:12px;padding:14px 16px;
+  padding-top:calc(14px + env(safe-area-inset-top));background:#2f96f6;color:#fff}
+#helpbar b{font-size:19px;font-weight:600}
+#helpbar button{margin-left:auto;width:34px;height:34px;border:none;border-radius:8px;
+  background:transparent;color:#fff;font-size:20px}
+#helpbody{flex:1;overflow-y:auto;padding:0 16px 28px}
+#helpbody h5{font-size:12px;color:#777;text-transform:uppercase;letter-spacing:1.2px;
+  padding:18px 0 8px;border-bottom:1px solid #e3e3e3;font-weight:700}
+.grow{display:flex;align-items:center;gap:16px;padding:13px 2px;border-bottom:1px solid #eee}
+.gic{flex:0 0 52px;height:52px;display:flex;align-items:center;justify-content:center;
+  font-size:26px;color:#2f96f6}
+.gtx{font-size:15px;line-height:1.45;color:#2a2a2a}
+.gtx b{color:#1565c0;font-weight:600}
+
+/* ===== FAYL MENEJERI ===== */
+#fm{position:fixed;inset:0;background:#101014;z-index:300;display:flex;flex-direction:column}
+#fm[hidden]{display:none}
+#fmbar{display:flex;align-items:center;gap:8px;padding:10px;padding-top:calc(10px + env(safe-area-inset-top));
+  background:#181820;border-bottom:1px solid #2a2a2a}
+#fmbar button{width:40px;height:40px;border:none;border-radius:8px;background:#2b2b2b;color:#fff;font-size:16px}
+#fmpath{flex:1;font-size:12px;color:#7ab8ff;font-family:ui-monospace,monospace;overflow:hidden;
+  text-overflow:ellipsis;white-space:nowrap}
+#fmlist{flex:1;overflow-y:auto;padding:4px 6px}
+.fmitem{display:flex;align-items:center;gap:8px;padding:10px;border-bottom:1px solid #1e1e26;font-size:14px}
+.fmitem[data-dir]:active{background:#22222a}
+.fmname{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.fmitem .sz{margin-left:auto;color:#777;font-size:11px;white-space:nowrap}
+.fmact{flex:0 0 auto;width:42px;height:38px;border:none;border-radius:8px;background:#2b2b2b;color:#fff;font-size:15px}
+.fmact:active{background:#2fbf60}
+.fmempty{text-align:center;color:#666;padding:30px;font-size:13px}
+
+/* ===== RUXSAT DARVOZASI ===== */
+#accgate{display:none;position:fixed;inset:0;z-index:999;background:#0b0b0f;flex-direction:column;
+  align-items:center;justify-content:center;text-align:center;padding:24px}
+@keyframes accspin{to{transform:rotate(360deg)}}
+
+/* Landscape: panel yon tomonga */
+@media (orientation:landscape) and (max-height:480px){
+  #bar{position:absolute;right:0;top:0;bottom:0;left:auto;width:58px;flex-direction:column;
+    border-top:none;border-left:1px solid #222;background:rgba(17,17,17,.82);padding:8px 6px;z-index:30}
+  #bar button{flex:0 0 auto;width:46px;height:44px}
+  #video{margin-right:58px}
+  #topright{right:66px}
+}
+</style>
+</head>
+<body>
+
+<div id="accgate">
+  <div style="font-size:46px;margin-bottom:14px">🔐</div>
+  <div style="font-size:19px;font-weight:bold;margin-bottom:8px">Ruxsat kutilmoqda</div>
+  <div id="accmsg" style="font-size:14px;color:#9a9aa4;max-width:320px;line-height:1.5">Egasiga Telegram orqali so'rov yuborildi. Iltimos, u tasdiqlashini kuting…</div>
+  <div style="margin-top:18px;width:36px;height:36px;border:3px solid #2b2b33;border-top-color:#2fbf60;border-radius:50%;animation:accspin 1s linear infinite"></div>
+</div>
+
+<div id="app">
+  <div id="video">
+    <img id="screenshot" src="" style="display:none">
+    <div id="status" class="loading">⏳ Ulanmoqda...</div>
+    <div class="hud" id="fps">— FPS</div>
+    <div class="hud" id="zoomlevel">1.0x</div>
+    <div class="hud" id="toast"></div>
+    <div id="ripple"></div>
+    <div id="topright">
+      <button id="fsbtn" title="Butun ekran">⛶</button>
+      <button id="helpbtn" title="Qanday boshqariladi">?</button>
+    </div>
+  </div>
+
+  <div id="bar">
+    <button id="bMode"><span>🖱️</span><span class="lbl" id="bModeLbl">Trackpad</span></button>
+    <button id="bKeys"><span>⌨️</span><span class="lbl">Klavia</span></button>
+    <button id="bApps"><span>⊞</span><span class="lbl">Tizim</span></button>
+    <button id="bFiles"><span>📁</span><span class="lbl">Fayllar</span></button>
+    <button id="bCfg"><span>⚙️</span><span class="lbl">Sozlama</span></button>
+  </div>
+</div>
+
+<div id="sheet">
+  <div id="sheetgrip"><i></i></div>
+  <div id="tabs">
+    <button class="tab active" data-tab="keys">⌨️</button>
+    <button class="tab" data-tab="sys">⊞</button>
+    <button class="tab" data-tab="media">🎵</button>
+    <button class="tab" data-tab="cfg">⚙️</button>
+  </div>
+  <div id="panes">
+
+    <div class="pane" data-pane="keys">
+      <div id="kbrow">
+        <input id="kbinput" type="text" placeholder="Yozing — to'g'ridan-to'g'ri PC ga" autocomplete="off"
+               autocapitalize="off" autocorrect="off" spellcheck="false">
+        <button id="kbBack">⌫</button>
+        <button id="kbEnter">⏎</button>
+      </div>
+      <div class="kbhint">Maydonga yozganingiz darhol kompyuterga tushadi.</div>
+      <div class="section">Asosiy</div>
+      <button data-special="enter">⏎ Enter</button>
+      <button data-special="backspace">⌫ O'chir</button>
+      <button data-special="space">␣ Probel</button>
+      <button data-special="tab">⇥ Tab</button>
+      <button data-special="esc">⎋ Esc</button>
+      <button data-special="delete">⌦ Del</button>
+      <div class="section">Yo'nalish</div>
+      <div class="dpad">
+        <button class="u" data-special="up">▲</button>
+        <button class="l" data-special="left">◄</button>
+        <button class="c">✜</button>
+        <button class="r" data-special="right">►</button>
+        <button class="d" data-special="down">▼</button>
+      </div>
+      <div class="section">Navigatsiya</div>
+      <button data-special="home">⤒ Home</button>
+      <button data-special="end">⤓ End</button>
+      <button data-special="pageup">▲ PgUp</button>
+      <button data-special="pagedown">▼ PgDn</button>
+      <div class="section">Yorliqlar</div>
+      <button data-combo="ctrl+c">📋 Nusxa</button>
+      <button data-combo="ctrl+v">📥 Qo'y</button>
+      <button data-combo="ctrl+x">✂️ Kes</button>
+      <button data-combo="ctrl+z">↶ Bekor</button>
+      <button data-combo="ctrl+y">↷ Qayta</button>
+      <button data-combo="ctrl+a">⬚ Hammasi</button>
+    </div>
+
+    <div class="pane" data-pane="sys" hidden>
+      <div class="section">Oyna</div>
+      <button data-combo="win">⊞ Win menyu</button>
+      <button data-combo="alt+tab">⇄ Oynalar</button>
+      <button data-combo="win+d">🖥 Ish stoli</button>
+      <button data-combo="win+e">📁 Explorer</button>
+      <button data-combo="alt+left">◄ Orqaga</button>
+      <button data-combo="alt+right">► Oldinga</button>
+      <div class="section">Sichqoncha</div>
+      <button id="sysLeft">🖱️ Chap klik</button>
+      <button id="sysRight">🖱️ O'ng klik</button>
+      <button id="sysMid">🖱️ O'rta klik</button>
+      <button id="sysDrag">✊ Ushlab turish</button>
+      <div class="section">Ekran</div>
+      <button id="sysLand">⛶ Landscape</button>
+      <button data-combo="win+l">🔒 Qulflash</button>
+    </div>
+
+    <div class="pane" data-pane="media" hidden>
+      <button data-special="voldown">🔉 Ovoz−</button>
+      <button data-special="volup">🔊 Ovoz+</button>
+      <button data-special="mute">🔇 O'chir</button>
+      <button data-special="prev">⏮ Oldingi</button>
+      <button data-special="playpause">⏯ Play</button>
+      <button data-special="next">⏭ Keyingi</button>
+    </div>
+
+    <div class="pane" data-pane="cfg" hidden>
+      <div class="section">Tasvir sifati</div>
+      <div class="row"><label>Kenglik</label><input type="range" id="wslider" min="480" max="1920" step="60" value="540"><span class="val" id="wval">540</span></div>
+      <div class="row"><label>Tiniqlik</label><input type="range" id="qslider" min="20" max="85" step="1" value="28"><span class="val" id="qval">28</span></div>
+      <div class="row"><label>Maks FPS</label><input type="range" id="fslider" min="1" max="30" step="1" value="30"><span class="val" id="fval">30</span></div>
+      <button data-w="480" data-q="26" data-f="30">⚡ Tez</button>
+      <button data-w="720" data-q="34" data-f="22">⚖️ O'rta</button>
+      <button data-w="1080" data-q="46" data-f="14">💎 Tiniq</button>
+      <div class="section">Sezgirlik</div>
+      <div class="row"><label>Kursor</label><input type="range" id="ssens" min="10" max="40" step="1" value="19"><span class="val" id="svs">1.9</span></div>
+      <div class="row"><label>Scroll</label><input type="range" id="sscr" min="1" max="12" step="1" value="4"><span class="val" id="svc">4</span></div>
+      <div class="section">Boshqa</div>
+      <button id="toggleScreens">🖥 Barcha monitor</button>
+      <button id="toggleCursor">🖱️ Kursor: ON</button>
+      <button id="toggleFull" class="wide">🖥️ Sichqoncha rejimi (kompyuter brauzeri)</button>
+    </div>
+
+  </div>
+</div>
+
+<div id="help">
+  <div id="helpbar"><b>Qanday boshqariladi</b><button id="helpclose">✕</button></div>
+  <div id="helpbody">
+    <h5>Jest &nbsp;·&nbsp; Tushuntirish</h5>
+    <div class="grow"><div class="gic">👌</div><div class="gtx">Ikki barmoq bilan <b>chimdib</b> kattalashtiring.</div></div>
+    <div class="grow"><div class="gic">☝️</div><div class="gtx">Bir barmoqni qo'yib <b>suring</b> — kursor shunga qarab yuradi.</div></div>
+    <div class="grow"><div class="gic">👆</div><div class="gtx">Bir barmoq bilan <b>bir marta bosing</b> — chap klik.</div></div>
+    <div class="grow"><div class="gic">✌️</div><div class="gtx">Ikki barmoq bilan bosing — <b>o'ng klik</b>.</div></div>
+    <div class="grow"><div class="gic">🖐️</div><div class="gtx">Uch barmoq bilan bosing — <b>o'rta klik</b>.</div></div>
+    <div class="grow"><div class="gic">✌️</div><div class="gtx">Ikki barmoqni qo'yib suring — <b>aylantirish</b> (yuqoriga-pastga yoki yon tomonga).</div></div>
+    <div class="grow"><div class="gic">👆</div><div class="gtx">Ikki marta bosib, qo'yib yubormasdan suring — <b>ushlab tortish</b> yoki matn belgilash.</div></div>
+    <div class="grow"><div class="gic">⏱️</div><div class="gtx">Bosib <b>ushlab turing</b> — o'ng klik.</div></div>
+    <h5>Rejimlar</h5>
+    <div class="grow"><div class="gic">🖱️</div><div class="gtx"><b>Trackpad</b> — noutbuk sichqonchasi kabi: barmoq surilsa kursor siljiydi. Aniq ish uchun qulay.</div></div>
+    <div class="grow"><div class="gic">🎯</div><div class="gtx"><b>To'g'ridan</b> — qayerga bossangiz kursor o'sha yerga sakraydi. Tez ish uchun qulay.</div></div>
+    <div class="grow"><div class="gic">⛶</div><div class="gtx">Yuqoridagi tugma — <b>butun ekran</b>. Telefonni yon burganingizda tasvir kattalashadi.</div></div>
+  </div>
+</div>
+
+<div id="fm" hidden>
+  <div id="fmbar">
+    <button id="fmUp">⬆</button>
+    <span id="fmpath">/</span>
+    <button id="fmClose">✕</button>
+  </div>
+  <div id="fmlist"></div>
+</div>
+
+<script>
+var tg = window.Telegram && window.Telegram.WebApp;
+var HEADERS = { 'ngrok-skip-browser-warning': 'true' };
+var userId = 0;
+var TGINIT = (tg && tg.initData) ? tg.initData : '';
+var SID = '';
+var MINIKEY = '';
+try { MINIKEY = new URLSearchParams(location.search).get('k') || ''; } catch(e){}
+if (TGINIT) HEADERS['X-Tg-Init'] = TGINIT;
+if (MINIKEY) HEADERS['X-Key'] = MINIKEY;
+function authQS(){
+  if (MINIKEY) return '&k=' + encodeURIComponent(MINIKEY);
+  if (TGINIT) return '&tg_init=' + encodeURIComponent(TGINIT);
+  if (SID) return '&sid=' + encodeURIComponent(SID);
+  return '';
+}
+
+var img = document.getElementById('screenshot');
+var statusEl = document.getElementById('status');
+var fpsEl = document.getElementById('fps');
+var videoEl = document.getElementById('video');
+var zlevel = document.getElementById('zoomlevel');
+var toastEl = document.getElementById('toast');
+
+function api(qs){ return fetch('/api/control?user_id=' + userId + '&' + qs, {headers:HEADERS}).catch(function(){}); }
+
+var ws = null, wsReady = false, FULL = false;
+function ctrl(obj){
+  if (wsReady){ try { ws.send(JSON.stringify(obj)); return; } catch(e){} }
+  var p = 'action=' + obj.a;
+  for (var k in obj){ if (k !== 'a') p += '&' + k + '=' + encodeURIComponent(obj[k]); }
+  api(p);
+}
+
+var toastT = null;
+function toast(msg){
+  toastEl.textContent = msg; toastEl.classList.add('on');
+  clearTimeout(toastT); toastT = setTimeout(function(){ toastEl.classList.remove('on'); }, 1100);
+}
+var rip = document.getElementById('ripple');
+function ripple(cx, cy){
+  var r = videoEl.getBoundingClientRect();
+  rip.style.left = (cx - r.left) + 'px'; rip.style.top = (cy - r.top) + 'px';
+  rip.classList.remove('go'); void rip.offsetWidth; rip.classList.add('go');
+}
+
+/* ===== TELEGRAM ===== */
+if (tg){
+  try { tg.ready(); tg.expand(); } catch(e){}
+  try { tg.setHeaderColor('#000000'); tg.setBackgroundColor('#000000'); } catch(e){}
+  // Pastga surganda Mini App yopilib ketmasin — boshqaruv uchun hayotiy muhim
+  try { if (tg.disableVerticalSwipes) tg.disableVerticalSwipes(); } catch(e){}
+  try { if (tg.unlockOrientation) tg.unlockOrientation(); } catch(e){}
+  try { if (screen.orientation && screen.orientation.unlock) screen.orientation.unlock(); } catch(e){}
+  var u = (tg.initDataUnsafe && tg.initDataUnsafe.user) ? tg.initDataUnsafe.user : {};
+  userId = u.id ? parseInt(u.id) : 0;
+}
+if (!userId) userId = %OWNER%;
+
+/* ===== OQIM ===== */
+var mode = 'none', gotFrame = false, curBlob = null, sframes = 0, sLast = Date.now();
+function startStream(){
+  mode = 'stream';
+  fetch('/api/stream?user_id=' + userId, {headers:HEADERS}).then(function(resp){
+    if (!resp.ok || !resp.body) throw new Error('s' + resp.status);
+    var reader = resp.body.getReader(), buf = new Uint8Array(0);
+    function pump(){ return reader.read().then(function(res){
+      if (res.done) throw new Error('end');
+      var nb = new Uint8Array(buf.length + res.value.length); nb.set(buf); nb.set(res.value, buf.length); buf = nb;
+      while (true){
+        var s = -1, e = -1, i;
+        for (i = 0; i < buf.length - 1; i++){ if (buf[i] === 0xFF && buf[i+1] === 0xD8){ s = i; break; } }
+        if (s < 0) break;
+        for (i = s + 2; i < buf.length - 1; i++){ if (buf[i] === 0xFF && buf[i+1] === 0xD9){ e = i + 1; break; } }
+        if (e < 0) break;
+        showFrame(buf.slice(s, e + 1)); buf = buf.slice(e + 1);
+      }
+      if (buf.length > 3000000) buf = new Uint8Array(0);
+      return pump();
+    }); }
+    return pump();
+  }).catch(function(){
+    if (mode === 'stream' && !gotFrame) startPolling();
+    else if (mode === 'stream') setTimeout(startStream, 1000);
+  });
+  setTimeout(function(){ if (mode === 'stream' && !gotFrame) startPolling(); }, 7000);
+}
+function showFrame(bytes){
+  gotFrame = true;
+  var url = URL.createObjectURL(new Blob([bytes], {type:'image/jpeg'}));
+  img.onload = function(){ if (curBlob) URL.revokeObjectURL(curBlob); curBlob = url; };
+  img.src = url; img.style.display = 'block'; statusEl.style.display = 'none';
+  sframes++;
+  var now = Date.now();
+  if (now - sLast >= 1000){ fpsEl.textContent = sframes + ' FPS · ' + Math.round(bytes.length/1024) + 'KB'; sframes = 0; sLast = now; }
+}
+var pInflight = 0, pSeq = 0, pShown = -1, pFrames = 0, pLast = Date.now();
+function pollOnce(){
+  if (pInflight >= 3) return;
+  pInflight++;
+  var my = pSeq++;
+  fetch('/api/screenshot?user_id=' + userId, {headers:HEADERS}).then(function(r){
+    if (!r.ok){ statusEl.innerHTML = '❌ ' + r.status; statusEl.classList.add('error'); return; }
+    return r.json().then(function(d){
+      if (my <= pShown) return;
+      pShown = my;
+      if (d.image){
+        img.src = d.image; img.style.display = 'block'; statusEl.style.display = 'none';
+        pFrames++;
+        var now = Date.now();
+        if (now - pLast >= 1000){ fpsEl.textContent = pFrames + ' FPS'; pFrames = 0; pLast = now; }
+      }
+    });
+  }).catch(function(){}).finally(function(){ pInflight--; });
+}
+function startPolling(){ if (mode === 'polling') return; mode = 'polling'; pollOnce(); setInterval(pollOnce, 150); }
+
+function wsConnect(){
+  try {
+    var proto = location.protocol === 'https:' ? 'wss:' : 'ws:';
+    ws = new WebSocket(proto + '//' + location.host + '/api/ws?user_id=' + userId + authQS());
+    ws.onopen = function(){ wsReady = true; };
+    ws.onclose = function(){ wsReady = false; setTimeout(wsConnect, 1500); };
+    ws.onerror = function(){ try { ws.close(); } catch(e){} };
+  } catch(e){}
+}
+
+/* ===== RUXSAT DARVOZASI ===== */
+function boot(){ startStream(); wsConnect(); }
+function startGate(){
+  if (MINIKEY || TGINIT){ boot(); return; }
+  SID = 'w' + Date.now().toString(36) + Math.random().toString(36).slice(2,8);
+  var ov = document.getElementById('accgate');
+  if (ov) ov.style.display = 'flex';
+  var info = (navigator.userAgent || '').slice(0,120);
+  fetch('/api/request_access?sid=' + encodeURIComponent(SID) + '&info=' + encodeURIComponent(info), {headers:HEADERS}).catch(function(){});
+  var tries = 0;
+  var poll = setInterval(function(){
+    tries++;
+    fetch('/api/access_status?sid=' + encodeURIComponent(SID), {headers:HEADERS})
+      .then(function(r){ return r.json(); })
+      .then(function(d){
+        if (d.status === 'allowed'){ clearInterval(poll); HEADERS['X-Sid'] = SID; if (ov) ov.style.display = 'none'; boot(); }
+        else if (d.status === 'denied'){ clearInterval(poll); var m = document.getElementById('accmsg'); if (m) m.textContent = '⛔ Ruxsat rad etildi.'; }
+      }).catch(function(){});
+    if (tries > 150){ clearInterval(poll); var m2 = document.getElementById('accmsg'); if (m2) m2.textContent = '⌛ Vaqt tugadi. Sahifani yangilang.'; }
+  }, 2000);
+}
+
+/* ===== ZOOM / PAN ===== */
+var scale = 1, tx = 0, ty = 0;
+function applyT(){
+  img.style.transform = 'translate(' + tx + 'px,' + ty + 'px) scale(' + scale + ')';
+  zlevel.textContent = scale.toFixed(1) + 'x';
+  zlevel.style.display = scale > 1.01 ? 'block' : 'none';
+}
+function clampPan(){
+  var vw = videoEl.clientWidth, vh = videoEl.clientHeight;
+  var ow = img.offsetWidth, oh = img.offsetHeight;
+  if (!ow || !oh) return;
+  var w = ow * scale, h = oh * scale;
+  var l = img.offsetLeft + tx, t = img.offsetTop + ty;
+  if (w >= vw){ if (l > 0) tx -= l; else if (l < vw - w) tx += (vw - w) - l; }
+  else tx = (vw - w) / 2 - img.offsetLeft;
+  if (h >= vh){ if (t > 0) ty -= t; else if (t < vh - h) ty += (vh - h) - t; }
+  else ty = (vh - h) / 2 - img.offsetTop;
+}
+function zoomAt(cx, cy, f){
+  var ns = Math.min(8, Math.max(1, scale * f));
+  if (ns === scale) return;
+  var r = videoEl.getBoundingClientRect();
+  var ox = cx - r.left, oy = cy - r.top;
+  var ux = (ox - img.offsetLeft - tx) / scale, uy = (oy - img.offsetTop - ty) / scale;
+  tx = ox - img.offsetLeft - ux * ns;
+  ty = oy - img.offsetTop - uy * ns;
+  scale = ns;
+  if (scale <= 1.01){ scale = 1; tx = 0; ty = 0; }
+  clampPan(); applyT();
+}
+function resetZoom(){ scale = 1; tx = 0; ty = 0; applyT(); }
+
+/* ===== JEST DVIGATELI (Chrome Remote Desktop modeli) ===== */
+var MODE = 'trackpad';                 // 'trackpad' | 'direct'
+try { MODE = localStorage.getItem('pcmode') || 'trackpad'; } catch(e){}
+var SENS = 1.9, SCRL = 4;
+try {
+  var sv = parseFloat(localStorage.getItem('pcsens')); if (sv) SENS = sv;
+  var sc = parseFloat(localStorage.getItem('pcscrl')); if (sc) SCRL = sc;
+} catch(e){}
+
+var TAP_SLOP = 14, TAP_TIME = 330, DTAP_TIME = 330, LONG_TIME = 560;
+
+var pts = {}, maxPts = 0, startT = 0, moved = 0;
+var lastX = 0, lastY = 0, downX = 0, downY = 0;
+var accX = 0, accY = 0;                // kutilayotgan nisbiy siljish
+var pinchD = 0, midX = 0, midY = 0, twoAct = '';   // '' | 'pinch' | 'scroll'
+var hAcc = 0, vAcc = 0;
+var longT = null, dragOn = false, armDrag = false;
+var lastTapT = 0, lastTapX = 0, lastTapY = 0;
+var panning = false;
+
+function inUI(t){ return t && t.closest && t.closest('button,input,#sheet,#topright'); }
+
+function absAt(cx, cy){
+  var r = img.getBoundingClientRect();
+  if (!r.width || !r.height) return null;
+  var fx = (cx - r.left) / r.width, fy = (cy - r.top) / r.height;
+  if (fx < 0 || fx > 1 || fy < 0 || fy > 1) return null;
+  return {x: fx.toFixed(4), y: fy.toFixed(4)};
+}
+function moveTo(cx, cy){
+  var m = absAt(cx, cy);
+  if (m) ctrl({a:'move', x:m.x, y:m.y});
+}
+function clearLong(){ if (longT){ clearTimeout(longT); longT = null; } }
+
+videoEl.addEventListener('pointerdown', function(e){
+  if (inUI(e.target)) return;
+  if (FULL && e.pointerType !== 'touch') return;
+  if (sheetOpen()){ closeSheet(); return; }
+  try { videoEl.setPointerCapture(e.pointerId); } catch(_){}
+  pts[e.pointerId] = {x:e.clientX, y:e.clientY};
+  var n = Object.keys(pts).length;
+  if (n > maxPts) maxPts = n;
+
+  if (n === 1){
+    startT = Date.now(); moved = 0;
+    downX = lastX = e.clientX; downY = lastY = e.clientY;
+    panning = true; twoAct = '';
+    // ikkinchi tegish bo'lsa — "ikki marta bosib tortish" ga tayyorlanamiz
+    armDrag = (Date.now() - lastTapT < DTAP_TIME) &&
+              (Math.hypot(e.clientX - lastTapX, e.clientY - lastTapY) < 40);
+    clearLong();
+    longT = setTimeout(function(){
+      if (Object.keys(pts).length === 1 && moved < TAP_SLOP && !dragOn){
+        if (MODE === 'direct') moveTo(downX, downY);
+        ctrl({a:'press', btn:'right'});
+        ripple(downX, downY); toast("O'ng klik");
+        maxPts = 0; moved = 9999;   // keyin tap yuborilmasin
+      }
+    }, LONG_TIME);
+  } else if (n === 2){
+    clearLong();
+    var p = Object.values(pts);
+    pinchD = Math.hypot(p[0].x - p[1].x, p[0].y - p[1].y);
+    midX = (p[0].x + p[1].x) / 2; midY = (p[0].y + p[1].y) / 2;
+    twoAct = ''; hAcc = 0; vAcc = 0;
+    accX = 0; accY = 0;
+  } else {
+    clearLong();
+  }
+});
+
+videoEl.addEventListener('pointermove', function(e){
+  if (!pts[e.pointerId]) return;
+  pts[e.pointerId] = {x:e.clientX, y:e.clientY};
+  var n = Object.keys(pts).length;
+
+  if (n >= 2){
+    accX = 0; accY = 0;
+    var p = Object.values(pts);
+    var d = Math.hypot(p[0].x - p[1].x, p[0].y - p[1].y);
+    var mx = (p[0].x + p[1].x) / 2, my = (p[0].y + p[1].y) / 2;
+    var dd = d - pinchD, dmx = mx - midX, dmy = my - midY;
+    // birinchi sezilarli harakatda chimdish/aylantirish tanlanadi va qulflanadi
+    if (!twoAct){
+      if (Math.abs(dd) > 9 && Math.abs(dd) > Math.hypot(dmx, dmy) * 1.2) twoAct = 'pinch';
+      else if (Math.hypot(dmx, dmy) > 9) twoAct = 'scroll';
+    }
+    if (twoAct === 'pinch' && pinchD > 0){ zoomAt(mx, my, d / pinchD); }
+    else if (twoAct === 'scroll'){
+      vAcc += dmy * SCRL; hAcc += dmx * SCRL;
+      if (Math.abs(vAcc) >= 12){ ctrl({a:'scroll', amount:Math.round(vAcc)}); vAcc = 0; }
+      if (Math.abs(hAcc) >= 12){ ctrl({a:'hscroll', amount:Math.round(-hAcc)}); hAcc = 0; }
+    }
+    pinchD = d; midX = mx; midY = my;
+    return;
+  }
+
+  // bu jestda 2+ barmoq ishlatilgan bo'lsa, qolgan bitta barmoq bilan hech narsa qilmaymiz
+  if (maxPts >= 2){ lastX = e.clientX; lastY = e.clientY; return; }
+
+  var dx = e.clientX - lastX, dy = e.clientY - lastY;
+  lastX = e.clientX; lastY = e.clientY;
+  moved += Math.abs(dx) + Math.abs(dy);
+  if (moved > TAP_SLOP) clearLong();
+
+  // "ikki marta bosib tortish" — bosib ushlab tortish / matn belgilash
+  if (armDrag && !dragOn && moved > TAP_SLOP){
+    dragOn = true; armDrag = false;
+    if (MODE === 'direct') moveTo(downX, downY);
+    ctrl({a:'down', btn:'left'});
+    toast('Ushlab tortish');
+  }
+
+  if (MODE === 'direct'){
+    if (dragOn){ moveTo(e.clientX, e.clientY); }
+    else if (scale > 1.01 && panning){ tx += dx; ty += dy; clampPan(); applyT(); }
+    else { moveTo(e.clientX, e.clientY); }
+    return;
+  }
+  // trackpad: nisbiy siljish (zoomda ham ekranda 1:1 tuyulsin)
+  var k = SENS / Math.max(1, scale);
+  accX += dx * k; accY += dy * k;
+});
+
+setInterval(function(){
+  if (Math.abs(accX) >= 1 || Math.abs(accY) >= 1){
+    ctrl({a:'moverel', dx:Math.round(accX), dy:Math.round(accY)});
+    accX = 0; accY = 0;
+  }
+}, 35);
+
+function endPtr(e){
+  if (!(e.pointerId in pts)) return;
+  delete pts[e.pointerId];
+  if (Object.keys(pts).length > 0) return;   // hali barmoq bor
+  clearLong();
+  panning = false;
+  var dur = Date.now() - startT;
+
+  if (dragOn){
+    ctrl({a:'up', btn:'left'});
+    dragOn = false; armDrag = false; maxPts = 0; twoAct = '';
+    return;
+  }
+  if (moved < TAP_SLOP && dur < TAP_TIME && !twoAct){
+    if (maxPts >= 3){ ctrl({a:'press', btn:'middle'}); toast("O'rta klik"); }
+    else if (maxPts === 2){ ctrl({a:'press', btn:'right'}); toast("O'ng klik"); }
+    else {
+      // chap klik: ketma-ket ikki tegish OS darajasida 2x klik bo'lib chiqadi
+      if (MODE === 'direct'){
+        var m = absAt(e.clientX, e.clientY);
+        if (m) ctrl({a:'click', x:m.x, y:m.y, btn:'left'});
+      } else {
+        ctrl({a:'press', btn:'left'});
+      }
+      lastTapT = Date.now(); lastTapX = e.clientX; lastTapY = e.clientY;
+    }
+    ripple(e.clientX, e.clientY);
+  }
+  armDrag = false; maxPts = 0; twoAct = '';
+}
+videoEl.addEventListener('pointerup', endPtr);
+videoEl.addEventListener('pointercancel', endPtr);
+videoEl.addEventListener('wheel', function(e){
+  e.preventDefault();
+  if (FULL){ ctrl({a:'scroll', amount: e.deltaY < 0 ? 120 : -120}); return; }
+  zoomAt(e.clientX, e.clientY, e.deltaY < 0 ? 1.15 : 1/1.15);
+}, {passive:false});
+
+/* ===== REJIM TUGMASI ===== */
+var bMode = document.getElementById('bMode'), bModeLbl = document.getElementById('bModeLbl');
+function setMode(m){
+  MODE = m;
+  bModeLbl.textContent = (m === 'trackpad') ? 'Trackpad' : "To'g'ridan";
+  bMode.querySelector('span').textContent = (m === 'trackpad') ? '🖱️' : '🎯';
+  bMode.classList.toggle('active', m === 'direct');
+  try { localStorage.setItem('pcmode', m); } catch(e){}
+  toast(m === 'trackpad' ? 'Trackpad rejimi' : "To'g'ridan tegish rejimi");
+}
+bMode.onclick = function(){ setMode(MODE === 'trackpad' ? 'direct' : 'trackpad'); };
+setMode(MODE);
+
+/* ===== VARAQ (bottom sheet) ===== */
+var sheet = document.getElementById('sheet');
+function sheetOpen(){ return sheet.classList.contains('open'); }
+function openSheet(tab){
+  if (tab) selectTab(tab);
+  sheet.classList.add('open');
+}
+function closeSheet(){ sheet.classList.remove('open'); try { kbinput.blur(); } catch(e){} }
+function toggleSheet(tab){
+  if (sheetOpen() && (!tab || curTab === tab)) closeSheet();
+  else openSheet(tab);
+}
+var curTab = 'keys';
+var tabBtns = document.querySelectorAll('#tabs .tab');
+var paneEls = document.querySelectorAll('.pane');
+function selectTab(name){
+  curTab = name;
+  for (var i = 0; i < tabBtns.length; i++) tabBtns[i].classList.toggle('active', tabBtns[i].getAttribute('data-tab') === name);
+  for (var j = 0; j < paneEls.length; j++) paneEls[j].hidden = (paneEls[j].getAttribute('data-pane') !== name);
+}
+for (var t = 0; t < tabBtns.length; t++){
+  tabBtns[t].onclick = function(){ selectTab(this.getAttribute('data-tab')); };
+}
+document.getElementById('sheetgrip').onclick = closeSheet;
+document.getElementById('bKeys').onclick = function(){ toggleSheet('keys'); setTimeout(function(){ try{ kbinput.focus(); }catch(e){} }, 220); };
+document.getElementById('bApps').onclick = function(){ toggleSheet('sys'); };
+document.getElementById('bCfg').onclick  = function(){ toggleSheet('cfg'); };
+
+/* ===== KLAVIATURA (jonli yozish) ===== */
+var ZW = '​';
+var kbinput = document.getElementById('kbinput');
+function kbReset(){ kbinput.value = ZW; }
+kbinput.addEventListener('focus', kbReset);
+kbinput.addEventListener('input', function(){
+  var v = kbinput.value;
+  if (v === ''){ ctrl({a:'special', key:'backspace'}); kbReset(); return; }
+  var txt = v.split(ZW).join('');
+  if (txt){ ctrl({a:'type', text:txt}); }
+  kbReset();
+});
+kbinput.addEventListener('keydown', function(e){
+  if (e.key === 'Enter'){ e.preventDefault(); ctrl({a:'special', key:'enter'}); kbReset(); }
+  else if (e.key === 'Backspace' && (kbinput.value === ZW || kbinput.value === '')){
+    e.preventDefault(); ctrl({a:'special', key:'backspace'});
+  }
+});
+document.getElementById('kbBack').onclick  = function(){ ctrl({a:'special', key:'backspace'}); };
+document.getElementById('kbEnter').onclick = function(){ ctrl({a:'special', key:'enter'}); };
+
+/* ===== TUGMALAR ===== */
+var actBtns = document.querySelectorAll('#panes button[data-special],#panes button[data-combo]');
+for (var b = 0; b < actBtns.length; b++){
+  actBtns[b].onclick = function(){
+    var sp = this.getAttribute('data-special'), cm = this.getAttribute('data-combo');
+    if (sp) ctrl({a:'special', key:sp});
+    else if (cm) ctrl({a:'combo', keys:cm});
+  };
+}
+document.getElementById('sysLeft').onclick  = function(){ ctrl({a:'press', btn:'left'}); };
+document.getElementById('sysRight').onclick = function(){ ctrl({a:'press', btn:'right'}); };
+document.getElementById('sysMid').onclick   = function(){ ctrl({a:'press', btn:'middle'}); };
+var holdOn = false;
+document.getElementById('sysDrag').onclick = function(){
+  holdOn = !holdOn;
+  ctrl({a: holdOn ? 'down' : 'up', btn:'left'});
+  this.classList.toggle('active', holdOn);
+  this.textContent = holdOn ? '✊ Ushlangan — bosing' : '✊ Ushlab turish';
+  toast(holdOn ? 'Chap tugma ushlandi' : "Qo'yib yuborildi");
+};
+
+/* ===== SOZLAMALAR ===== */
+var wS = document.getElementById('wslider'), qS = document.getElementById('qslider'), fS = document.getElementById('fslider');
+var wV = document.getElementById('wval'), qV = document.getElementById('qval'), fV = document.getElementById('fval');
+var cfgTimer = null;
+function sendCfg(){ fetch('/api/config?user_id=' + userId + '&w=' + wS.value + '&q=' + qS.value + '&fps=' + fS.value, {headers:HEADERS}).catch(function(){}); }
+function onSlide(){
+  wV.textContent = wS.value; qV.textContent = qS.value; fV.textContent = fS.value;
+  clearTimeout(cfgTimer); cfgTimer = setTimeout(sendCfg, 250);
+}
+wS.addEventListener('input', onSlide); qS.addEventListener('input', onSlide); fS.addEventListener('input', onSlide);
+var pbtns = document.querySelectorAll('.pane[data-pane="cfg"] button[data-w]');
+for (var i = 0; i < pbtns.length; i++){
+  pbtns[i].onclick = function(){
+    wS.value = this.getAttribute('data-w'); qS.value = this.getAttribute('data-q'); fS.value = this.getAttribute('data-f');
+    onSlide();
+  };
+}
+var ssens = document.getElementById('ssens'), svs = document.getElementById('svs');
+var sscr = document.getElementById('sscr'), svc = document.getElementById('svc');
+ssens.value = Math.round(SENS * 10); svs.textContent = (SENS).toFixed(1);
+sscr.value = SCRL; svc.textContent = SCRL;
+ssens.addEventListener('input', function(){
+  SENS = parseInt(ssens.value, 10) / 10; svs.textContent = SENS.toFixed(1);
+  try { localStorage.setItem('pcsens', SENS); } catch(e){}
+});
+sscr.addEventListener('input', function(){
+  SCRL = parseInt(sscr.value, 10); svc.textContent = SCRL;
+  try { localStorage.setItem('pcscrl', SCRL); } catch(e){}
+});
+var screensOn = false, cursorOn = true;
+var tScreens = document.getElementById('toggleScreens'), tCursor = document.getElementById('toggleCursor');
+tScreens.onclick = function(){
+  screensOn = !screensOn;
+  tScreens.classList.toggle('active', screensOn);
+  tScreens.textContent = screensOn ? '🖥 Barcha: ON' : '🖥 Barcha monitor';
+  fetch('/api/config?user_id=' + userId + '&allscreens=' + (screensOn?1:0), {headers:HEADERS}).catch(function(){});
+};
+tCursor.onclick = function(){
+  cursorOn = !cursorOn;
+  tCursor.textContent = '🖱️ Kursor: ' + (cursorOn ? 'ON' : 'OFF');
+  fetch('/api/config?user_id=' + userId + '&cursor=' + (cursorOn?1:0), {headers:HEADERS}).catch(function(){});
+};
+
+/* ===== BUTUN EKRAN / LANDSCAPE ===== */
+var fsOn = false;
+function setFs(on){
+  fsOn = on;
+  try {
+    if (on){
+      if (tg && tg.requestFullscreen) tg.requestFullscreen();
+      var el = document.documentElement;
+      if (!document.fullscreenElement && el.requestFullscreen) el.requestFullscreen().catch(function(){});
+    } else {
+      if (document.fullscreenElement && document.exitFullscreen) document.exitFullscreen().catch(function(){});
+      if (tg && tg.exitFullscreen) tg.exitFullscreen();
+    }
+  } catch(e){}
+  document.getElementById('fsbtn').classList.toggle('active', on);
+}
+document.getElementById('fsbtn').onclick = function(){ setFs(!fsOn); };
+var landOn = false;
+document.getElementById('sysLand').onclick = function(){
+  landOn = !landOn;
+  try {
+    if (landOn){
+      setFs(true);
+      setTimeout(function(){ try { if (screen.orientation && screen.orientation.lock) screen.orientation.lock('landscape'); } catch(e){} }, 260);
+    } else {
+      try { if (screen.orientation && screen.orientation.unlock) screen.orientation.unlock(); } catch(e){}
+    }
+  } catch(e){}
+  this.classList.toggle('active', landOn);
+  this.textContent = landOn ? '⛶ Portret' : '⛶ Landscape';
+};
+window.addEventListener('resize', function(){ clampPan(); applyT(); });
+
+/* ===== YORDAM ===== */
+var help = document.getElementById('help');
+document.getElementById('helpbtn').onclick = function(){ help.classList.add('open'); };
+document.getElementById('helpclose').onclick = function(){
+  help.classList.remove('open');
+  try { localStorage.setItem('pchelp', '1'); } catch(e){}
+};
+// birinchi ochilishda jest qo'llanmasi ko'rsatiladi
+try { if (!localStorage.getItem('pchelp')) setTimeout(function(){ help.classList.add('open'); }, 900); } catch(e){}
+
+/* ===== FAYL MENEJERI ===== */
+var fm = document.getElementById('fm'), fmpath = document.getElementById('fmpath'), fmlist = document.getElementById('fmlist');
+var fmCur = '';
+function fmFmt(n){ if (n >= 1048576) return (n/1048576).toFixed(1) + 'MB'; if (n >= 1024) return (n/1024).toFixed(0) + 'KB'; return n + 'B'; }
+function fmLoad(path){
+  fmpath.textContent = path || 'Drayvlar';
+  fmlist.innerHTML = '<div class="fmempty">Yuklanmoqda...</div>';
+  fetch('/api/fs/list?user_id=' + userId + '&path=' + encodeURIComponent(path || ''), {headers:HEADERS})
+    .then(function(r){ return r.json(); })
+    .then(function(d){
+      if (d.error){ fmlist.innerHTML = '<div class="fmempty">❌ ' + d.error + '</div>'; return; }
+      fmCur = d.path;
+      fm.dataset.parent = (d.parent === null ? '__drives__' : d.parent);
+      var SEP = String.fromCharCode(92);
+      function joinP(base, n){ if (!base) return n; return (base.charAt(base.length-1) === SEP ? base : base + SEP) + n; }
+      var html = '';
+      d.dirs.forEach(function(name){
+        html += '<div class="fmitem" data-dir="' + encodeURIComponent(joinP(d.path, name)) + '">📁 <span>' + name + '</span></div>';
+      });
+      d.files.forEach(function(f){
+        var ef = encodeURIComponent(joinP(d.path, f.name));
+        html += '<div class="fmitem"><span class="fmname">📄 ' + f.name + '</span><span class="sz">' + fmFmt(f.size) + '</span>' +
+                '<button class="fmact" data-send="' + ef + '">📤</button>' +
+                '<button class="fmact" data-open="' + ef + '">▶</button></div>';
+      });
+      if (!html) html = '<div class="fmempty">Bo’sh papka</div>';
+      fmlist.innerHTML = html;
+      var dirs = fmlist.querySelectorAll('.fmitem[data-dir]');
+      for (var i = 0; i < dirs.length; i++){ dirs[i].onclick = function(){ fmLoad(decodeURIComponent(this.getAttribute('data-dir'))); }; }
+      var acts = fmlist.querySelectorAll('.fmact');
+      for (var j = 0; j < acts.length; j++){
+        acts[j].onclick = function(e){
+          e.stopPropagation();
+          var send = this.getAttribute('data-send'), open = this.getAttribute('data-open');
+          if (send) fmSend(decodeURIComponent(send));
+          else if (open) fmOpen(decodeURIComponent(open));
+        };
+      }
+    })
+    .catch(function(e){ fmlist.innerHTML = '<div class="fmempty">❌ ' + e.message + '</div>'; });
+}
+function fmSend(path){
+  fmpath.textContent = '📤 Telegramga yuborilmoqda...';
+  fetch('/api/fs/send?user_id=' + userId + '&path=' + encodeURIComponent(path), {headers:HEADERS})
+    .then(function(r){ return r.json(); })
+    .then(function(d){ fmpath.textContent = d.ok ? '✅ Telegramga yuborildi' : ('❌ ' + (d.error || 'xato')); setTimeout(function(){ fmpath.textContent = fmCur; }, 2800); })
+    .catch(function(e){ fmpath.textContent = '❌ ' + e.message; });
+}
+function fmOpen(path){
+  fmpath.textContent = '▶ PC da ochilmoqda...';
+  fetch('/api/fs/open?user_id=' + userId + '&path=' + encodeURIComponent(path), {headers:HEADERS})
+    .then(function(r){ return r.json(); })
+    .then(function(d){ fmpath.textContent = d.ok ? '▶ PC da ochildi' : ('❌ ' + (d.error || 'xato')); setTimeout(function(){ fmpath.textContent = fmCur; }, 2000); })
+    .catch(function(e){ fmpath.textContent = '❌ ' + e.message; });
+}
+document.getElementById('bFiles').onclick = function(){ closeSheet(); fm.hidden = false; fmLoad(''); };
+document.getElementById('fmClose').onclick = function(){ fm.hidden = true; };
+document.getElementById('fmUp').onclick = function(){
+  var par = fm.dataset.parent;
+  if (par === '__drives__' || par === '') fmLoad('');
+  else fmLoad(par);
+};
+
+/* ===== KOMPYUTER BRAUZERI: haqiqiy sichqoncha + klaviatura ===== */
+function btnName(b){ return b === 2 ? 'right' : (b === 1 ? 'middle' : 'left'); }
+var lastMove = 0;
+videoEl.addEventListener('mousemove', function(e){
+  if (!FULL) return;
+  var now = Date.now(); if (now - lastMove < 30) return; lastMove = now;
+  moveTo(e.clientX, e.clientY);
+});
+videoEl.addEventListener('mousedown', function(e){
+  if (!FULL || inUI(e.target)) return;
+  e.preventDefault();
+  moveTo(e.clientX, e.clientY);
+  ctrl({a:'down', btn:btnName(e.button)});
+});
+window.addEventListener('mouseup', function(e){ if (FULL) ctrl({a:'up', btn:btnName(e.button)}); });
+videoEl.addEventListener('contextmenu', function(e){ if (FULL) e.preventDefault(); });
+videoEl.addEventListener('dblclick', function(e){ if (FULL) e.preventDefault(); });
+
+var KMAP = {'Enter':'enter','Backspace':'backspace','Tab':'tab','Escape':'esc','ArrowUp':'up','ArrowDown':'down',
+  'ArrowLeft':'left','ArrowRight':'right','Delete':'delete',' ':'space','Home':'home','End':'end',
+  'PageUp':'pageup','PageDown':'pagedown'};
+window.addEventListener('keydown', function(e){
+  if (!FULL) return;
+  var tag = e.target && e.target.tagName;
+  if (tag === 'INPUT' || tag === 'TEXTAREA') return;
+  var k = e.key;
+  if (k === 'Control' || k === 'Alt' || k === 'Shift' || k === 'Meta') return;
+  var mods = [];
+  if (e.ctrlKey) mods.push('ctrl');
+  if (e.altKey) mods.push('alt');
+  if (e.shiftKey) mods.push('shift');
+  if (e.metaKey) mods.push('win');
+  e.preventDefault();
+  if (KMAP[k]){
+    if (mods.length) ctrl({a:'combo', keys:mods.concat([KMAP[k]]).join('+')});
+    else ctrl({a:'special', key:KMAP[k]});
+    return;
+  }
+  if (k.length === 1){
+    if (e.ctrlKey || e.altKey || e.metaKey) ctrl({a:'combo', keys:mods.concat([k.toLowerCase()]).join('+')});
+    else ctrl({a:'type', text:k});
+  }
+});
+function setFull(on){
+  FULL = on;
+  videoEl.style.cursor = on ? 'crosshair' : '';
+  var tf = document.getElementById('toggleFull');
+  tf.classList.toggle('active', on);
+  tf.textContent = on ? '🖥️ Sichqoncha rejimi: YONIQ' : '🖥️ Sichqoncha rejimi (kompyuter brauzeri)';
+  if (on) resetZoom();
+  toast(on ? 'Sichqoncha rejimi yoniq' : "Sichqoncha rejimi o'chdi");
+}
+document.getElementById('toggleFull').onclick = function(){ setFull(!FULL); };
+(function(){
+  var isTouch = ('ontouchstart' in window) || (navigator.maxTouchPoints > 0);
+  var inTelegram = !!(tg && tg.initData);
+  if (!isTouch && !inTelegram) setTimeout(function(){ setFull(true); }, 400);
+})();
+
+startGate();
+</script>
+</body>
+</html>
