@@ -635,16 +635,94 @@ _BOT_START = time.time()
 SPLIT_PART_BYTES = 1950 * 1024 * 1024  # ~1.95GB (lokal Bot API 2GB limitidan past)
 _SPLIT_DIR = DATA_DIR / "_split"
 
+# ===== FAYL TURINI ANIQLASH (haqiqiy media bo'lib ko'rinsin) =====
+PHOTO_EXT = {".jpg", ".jpeg", ".png", ".webp", ".bmp"}
+VIDEO_EXT = {".mp4", ".mov", ".mkv", ".avi", ".webm", ".m4v", ".wmv", ".flv", ".mpg", ".mpeg", ".3gp"}
+AUDIO_EXT = {".mp3", ".m4a", ".aac", ".flac", ".wav", ".ogg", ".oga", ".opus", ".wma"}
+GIF_EXT = {".gif"}
+PHOTO_MAX_BYTES = 10 * 1024 * 1024  # sendPhoto limiti; kattasi hujjat bo'lib ketadi
+
+
+def _video_meta(path: str) -> dict:
+    """Video o'lchami/davomiyligi va oldindan ko'rish kadri (Telegram chiroyli ko'rsatishi uchun)."""
+    meta = {}
+    cap = None
+    try:
+        cap = cv2.VideoCapture(path)
+        if not cap.isOpened():
+            return meta
+        fps = cap.get(cv2.CAP_PROP_FPS) or 0
+        frames = cap.get(cv2.CAP_PROP_FRAME_COUNT) or 0
+        meta["w"] = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH) or 0)
+        meta["h"] = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT) or 0)
+        if fps > 0 and frames > 0:
+            meta["dur"] = int(frames / fps)
+        if frames > 1:
+            cap.set(cv2.CAP_PROP_POS_FRAMES, int(frames // 2))  # o'rtadan kadr
+        ok, frame = cap.read()
+        if ok and frame is not None:
+            h, w = frame.shape[:2]
+            if w > 0 and h > 0:
+                k = 320.0 / max(w, h)  # Telegram thumbnail: maks 320px
+                if k < 1:
+                    frame = cv2.resize(frame, (max(1, int(w * k)), max(1, int(h * k))))
+                ok2, buf = cv2.imencode(".jpg", frame, [int(cv2.IMWRITE_JPEG_QUALITY), 70])
+                if ok2 and len(buf) <= 200 * 1024:
+                    meta["thumb"] = buf.tobytes()
+    except Exception:
+        pass
+    finally:
+        if cap is not None:
+            try:
+                cap.release()
+            except Exception:
+                pass
+    return meta
+
+
+async def _send_as_media(chat_id, path: str, caption, parse_mode) -> bool:
+    """Kengaytmasiga qarab foto/video/musiqa qilib yuboradi. Mos kelmasa False qaytaradi."""
+    ext = os.path.splitext(path)[1].lower()
+    size = os.path.getsize(path)
+    f = FSInputFile(path)
+    if ext in GIF_EXT:
+        await bot.send_animation(chat_id, f, caption=caption, parse_mode=parse_mode)
+        return True
+    if ext in PHOTO_EXT and size <= PHOTO_MAX_BYTES:
+        await bot.send_photo(chat_id, f, caption=caption, parse_mode=parse_mode)
+        return True
+    if ext in VIDEO_EXT:
+        m = _video_meta(path)
+        thumb = BufferedInputFile(m["thumb"], "thumb.jpg") if m.get("thumb") else None
+        await bot.send_video(
+            chat_id, f, caption=caption, parse_mode=parse_mode,
+            width=m.get("w") or None, height=m.get("h") or None,
+            duration=m.get("dur") or None, thumbnail=thumb, supports_streaming=True,
+        )
+        return True
+    if ext in AUDIO_EXT:
+        await bot.send_audio(
+            chat_id, f, caption=caption, parse_mode=parse_mode,
+            title=os.path.splitext(os.path.basename(path))[0],
+        )
+        return True
+    return False
+
 
 async def send_file_any_size(chat_id, path, caption=None, as_video=False, parse_mode="Markdown"):
-    """Istalgan kattalikdagi faylni yuboradi — 2GB dan katta bo'lsa bo'laklarga bo'lib."""
+    """Istalgan kattalikdagi faylni yuboradi — 2GB dan katta bo'lsa bo'laklarga bo'lib.
+
+    Rasm/video/ovoz bo'lsa hujjat emas, haqiqiy media bo'lib ketadi.
+    """
     path = str(path)
     size = os.path.getsize(path)
     if size <= MAX_TELEGRAM_FILE_BYTES:
-        if as_video:
-            await bot.send_video(chat_id, FSInputFile(path), caption=caption, parse_mode=parse_mode)
-        else:
-            await bot.send_document(chat_id, FSInputFile(path), caption=caption, parse_mode=parse_mode)
+        try:
+            if await _send_as_media(chat_id, path, caption, parse_mode):
+                return
+        except Exception:
+            pass  # media sifatida ketmadi (kodek/o'lcham) — hujjat qilib yuboramiz
+        await bot.send_document(chat_id, FSInputFile(path), caption=caption, parse_mode=parse_mode)
         return
     import math
     parts = math.ceil(size / SPLIT_PART_BYTES)

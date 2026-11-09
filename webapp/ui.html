@@ -33,7 +33,9 @@ html,body{height:100%;background:#000;color:#fff;overflow:hidden;overscroll-beha
 @keyframes rip{from{opacity:.9;transform:scale(.35)}to{opacity:0;transform:scale(1.25)}}
 
 /* Suzuvchi yuqori tugmalar */
-#topright{position:absolute;right:8px;top:8px;z-index:30;display:flex;gap:6px}
+/* --sat: Telegram to'liq ekranda yuqorini o'z paneli qoplaydi — tugmalar shuncha pastga tushadi */
+#topright{position:absolute;right:8px;top:calc(8px + var(--sat,0px));z-index:30;display:flex;gap:6px;
+  transition:top .2s}
 #topright button{width:38px;height:38px;border:none;border-radius:10px;font-size:16px;
   background:rgba(22,22,26,.72);color:#fff;backdrop-filter:blur(6px)}
 #topright button:active{background:rgba(60,60,70,.9)}
@@ -76,11 +78,6 @@ html,body{height:100%;background:#000;color:#fff;overflow:hidden;overscroll-beha
 .dpad .c{grid-column:2;grid-row:2;background:#141418;color:#44444c;pointer-events:none}
 
 /* Klaviatura qatori */
-#kbrow{display:flex;gap:6px;flex-basis:100%}
-#kbrow input{flex:1;padding:12px;border-radius:10px;border:1px solid #3a3a44;background:#202026;
-  color:#fff;font-size:15px}
-#kbrow button{flex:0 0 auto;width:48px;padding:0;font-size:15px}
-.kbhint{flex-basis:100%;font-size:11px;color:#6a6a76;line-height:1.5}
 
 /* Slayderlar */
 .row{flex-basis:100%;display:flex;align-items:center;gap:10px;padding:2px}
@@ -127,6 +124,29 @@ html,body{height:100%;background:#000;color:#fff;overflow:hidden;overscroll-beha
   align-items:center;justify-content:center;text-align:center;padding:24px}
 @keyframes accspin{to{transform:rotate(360deg)}}
 
+/* ===== EKRAN KLAVIATURASI ===== */
+#kbd{position:fixed;left:0;right:0;bottom:0;z-index:130;background:#15151a;border-top:1px solid #2a2a32;
+  transform:translateY(100%);transition:transform .2s ease;display:flex;flex-direction:column;gap:4px;
+  padding:5px 4px calc(5px + env(safe-area-inset-bottom))}
+#kbd.open{transform:translateY(0)}
+.krow{display:flex;gap:4px}
+.krow button{flex:1 1 0;min-width:0;height:44px;border:none;border-radius:8px;background:#2c2c34;color:#fff;
+  font-size:16px;padding:0;display:flex;align-items:center;justify-content:center}
+.krow button:active{background:#44444f}
+.krow button.wide2{flex:2 1 0}
+.krow button.wide4{flex:4 1 0}
+.krow button.mod{background:#242430;font-size:12px}
+.krow button.mod.on{background:#2fbf60;color:#04220f;font-weight:700}
+.krow button.mod.lock{background:#f0a020;color:#2a1200;font-weight:700}
+.krow button.on{background:#2fbf60;color:#04220f;font-weight:700}
+.krow.ktool button,.krow.kfn button{height:34px;font-size:12px;background:#232329}
+.krow.kfn[hidden]{display:none}
+#kbnative{display:flex;gap:6px}
+#kbnative[hidden]{display:none}
+#kbnative input{flex:1;padding:12px;border-radius:9px;border:1px solid #3a3a44;background:#202026;
+  color:#fff;font-size:15px}
+#kbnative button{flex:0 0 52px;height:auto;border:none;border-radius:9px;background:#2c2c34;color:#fff;font-size:15px}
+
 /* Landscape: panel yon tomonga */
 @media (orientation:landscape) and (max-height:480px){
   #bar{position:absolute;right:0;top:0;bottom:0;left:auto;width:58px;flex-direction:column;
@@ -155,6 +175,7 @@ html,body{height:100%;background:#000;color:#fff;overflow:hidden;overscroll-beha
     <div class="hud" id="toast"></div>
     <div id="ripple"></div>
     <div id="topright">
+      <button id="rotbtn" title="Landscape">⟳</button>
       <button id="fsbtn" title="Butun ekran">⛶</button>
       <button id="helpbtn" title="Qanday boshqariladi">?</button>
     </div>
@@ -172,49 +193,11 @@ html,body{height:100%;background:#000;color:#fff;overflow:hidden;overscroll-beha
 <div id="sheet">
   <div id="sheetgrip"><i></i></div>
   <div id="tabs">
-    <button class="tab active" data-tab="keys">⌨️</button>
-    <button class="tab" data-tab="sys">⊞</button>
+    <button class="tab active" data-tab="sys">⊞</button>
     <button class="tab" data-tab="media">🎵</button>
     <button class="tab" data-tab="cfg">⚙️</button>
   </div>
   <div id="panes">
-
-    <div class="pane" data-pane="keys">
-      <div id="kbrow">
-        <input id="kbinput" type="text" placeholder="Yozing — to'g'ridan-to'g'ri PC ga" autocomplete="off"
-               autocapitalize="off" autocorrect="off" spellcheck="false">
-        <button id="kbBack">⌫</button>
-        <button id="kbEnter">⏎</button>
-      </div>
-      <div class="kbhint">Maydonga yozganingiz darhol kompyuterga tushadi.</div>
-      <div class="section">Asosiy</div>
-      <button data-special="enter">⏎ Enter</button>
-      <button data-special="backspace">⌫ O'chir</button>
-      <button data-special="space">␣ Probel</button>
-      <button data-special="tab">⇥ Tab</button>
-      <button data-special="esc">⎋ Esc</button>
-      <button data-special="delete">⌦ Del</button>
-      <div class="section">Yo'nalish</div>
-      <div class="dpad">
-        <button class="u" data-special="up">▲</button>
-        <button class="l" data-special="left">◄</button>
-        <button class="c">✜</button>
-        <button class="r" data-special="right">►</button>
-        <button class="d" data-special="down">▼</button>
-      </div>
-      <div class="section">Navigatsiya</div>
-      <button data-special="home">⤒ Home</button>
-      <button data-special="end">⤓ End</button>
-      <button data-special="pageup">▲ PgUp</button>
-      <button data-special="pagedown">▼ PgDn</button>
-      <div class="section">Yorliqlar</div>
-      <button data-combo="ctrl+c">📋 Nusxa</button>
-      <button data-combo="ctrl+v">📥 Qo'y</button>
-      <button data-combo="ctrl+x">✂️ Kes</button>
-      <button data-combo="ctrl+z">↶ Bekor</button>
-      <button data-combo="ctrl+y">↷ Qayta</button>
-      <button data-combo="ctrl+a">⬚ Hammasi</button>
-    </div>
 
     <div class="pane" data-pane="sys" hidden>
       <div class="section">Oyna</div>
@@ -224,6 +207,13 @@ html,body{height:100%;background:#000;color:#fff;overflow:hidden;overscroll-beha
       <button data-combo="win+e">📁 Explorer</button>
       <button data-combo="alt+left">◄ Orqaga</button>
       <button data-combo="alt+right">► Oldinga</button>
+      <div class="section">Yorliqlar</div>
+      <button data-combo="ctrl+c">📋 Nusxa</button>
+      <button data-combo="ctrl+v">📥 Qo'y</button>
+      <button data-combo="ctrl+x">✂️ Kes</button>
+      <button data-combo="ctrl+z">↶ Bekor</button>
+      <button data-combo="ctrl+a">⬚ Hammasi</button>
+      <button data-combo="ctrl+s">💾 Saqlash</button>
       <div class="section">Sichqoncha</div>
       <button id="sysLeft">🖱️ Chap klik</button>
       <button id="sysRight">🖱️ O'ng klik</button>
@@ -255,6 +245,7 @@ html,body{height:100%;background:#000;color:#fff;overflow:hidden;overscroll-beha
       <div class="row"><label>Kursor</label><input type="range" id="ssens" min="10" max="40" step="1" value="19"><span class="val" id="svs">1.9</span></div>
       <div class="row"><label>Scroll</label><input type="range" id="sscr" min="1" max="12" step="1" value="4"><span class="val" id="svc">4</span></div>
       <div class="section">Boshqa</div>
+      <button id="btnExitFs" class="wide">⤢ Butun ekrandan chiqish</button>
       <button id="toggleScreens">🖥 Barcha monitor</button>
       <button id="toggleCursor">🖱️ Kursor: ON</button>
       <button id="toggleFull" class="wide">🖥️ Sichqoncha rejimi (kompyuter brauzeri)</button>
@@ -275,10 +266,52 @@ html,body{height:100%;background:#000;color:#fff;overflow:hidden;overscroll-beha
     <div class="grow"><div class="gic">✌️</div><div class="gtx">Ikki barmoqni qo'yib suring — <b>aylantirish</b> (yuqoriga-pastga yoki yon tomonga).</div></div>
     <div class="grow"><div class="gic">👆</div><div class="gtx">Ikki marta bosib, qo'yib yubormasdan suring — <b>ushlab tortish</b> yoki matn belgilash.</div></div>
     <div class="grow"><div class="gic">⏱️</div><div class="gtx">Bosib <b>ushlab turing</b> — o'ng klik.</div></div>
+    <h5>Kattalashtirilganda</h5>
+    <div class="grow"><div class="gic">🔍</div><div class="gtx">Bir barmoq surilsa <b>tasvir suriladi</b> — kursor joyida qoladi. Shunday qilib chetlarga ham yetib borasiz.</div></div>
+    <div class="grow"><div class="gic">🎯</div><div class="gtx">Bosilsa <b>aynan o'sha nuqtaga</b> klik tushadi.</div></div>
+    <div class="grow"><div class="gic">⟲</div><div class="gtx">Ikki barmoq bilan teskari chimdisangiz asliga qaytadi.</div></div>
+
+    <h5>Klaviatura</h5>
+    <div class="grow"><div class="gic">⌨️</div><div class="gtx">Pastdagi <b>⌨️</b> tugmasi to'liq klaviaturani ochadi: harflar, raqamlar, belgilar (<b>?123</b>) va <b>Fn</b> orqali F1–F12.</div></div>
+    <div class="grow"><div class="gic">⌃</div><div class="gtx"><b>Ctrl / Alt / Shift / Win</b> bosilsa keyingi tugma bilan birga ketadi (Ctrl+C). <b>Ikki marta</b> bosilsa qulflanadi va shu holda qoladi.</div></div>
+    <div class="grow"><div class="gic">⌨︎</div><div class="gtx"><b>⌨︎</b> tugmasi telefonning o'z klaviaturasiga o'tkazadi — o'zbekcha yozish va emoji uchun qulay.</div></div>
+
     <h5>Rejimlar</h5>
     <div class="grow"><div class="gic">🖱️</div><div class="gtx"><b>Trackpad</b> — noutbuk sichqonchasi kabi: barmoq surilsa kursor siljiydi. Aniq ish uchun qulay.</div></div>
     <div class="grow"><div class="gic">🎯</div><div class="gtx"><b>To'g'ridan</b> — qayerga bossangiz kursor o'sha yerga sakraydi. Tez ish uchun qulay.</div></div>
     <div class="grow"><div class="gic">⛶</div><div class="gtx">Yuqoridagi tugma — <b>butun ekran</b>. Telefonni yon burganingizda tasvir kattalashadi.</div></div>
+  </div>
+</div>
+
+<div id="kbd">
+  <div class="krow ktool">
+    <button data-sp="esc">Esc</button>
+    <button id="kFn">Fn</button>
+    <button data-sp="tab">Tab</button>
+    <button data-sp="home">Home</button>
+    <button data-sp="end">End</button>
+    <button data-sp="pageup">PgUp</button>
+    <button data-sp="pagedown">PgDn</button>
+    <button data-sp="delete">Del</button>
+    <button id="kNative">⌨︎</button>
+    <button id="kClose">✕</button>
+  </div>
+  <div class="krow kfn" hidden></div>
+  <div id="kbnative" hidden>
+    <input id="kbinput" type="text" placeholder="Telefon klaviaturasi bilan yozing"
+           autocomplete="off" autocapitalize="off" autocorrect="off" spellcheck="false">
+    <button id="kbBack">⌫</button>
+    <button id="kbEnter">⏎</button>
+  </div>
+  <div id="kkeys"></div>
+  <div class="krow">
+    <button class="mod" data-mod="ctrl">Ctrl</button>
+    <button class="mod" data-mod="alt">Alt</button>
+    <button class="mod" data-mod="win">Win</button>
+    <button data-sp="left">◄</button>
+    <button data-sp="up">▲</button>
+    <button data-sp="down">▼</button>
+    <button data-sp="right">►</button>
   </div>
 </div>
 
@@ -506,6 +539,8 @@ function moveTo(cx, cy){
   if (m) ctrl({a:'move', x:m.x, y:m.y});
 }
 function clearLong(){ if (longT){ clearTimeout(longT); longT = null; } }
+// Kattalashtirilganda ham "to'g'ridan" rejimdagidek aniq nuqtaga ishlaymiz
+function absMode(){ return MODE === 'direct' || scale > 1.01; }
 
 videoEl.addEventListener('pointerdown', function(e){
   if (inUI(e.target)) return;
@@ -526,7 +561,7 @@ videoEl.addEventListener('pointerdown', function(e){
     clearLong();
     longT = setTimeout(function(){
       if (Object.keys(pts).length === 1 && moved < TAP_SLOP && !dragOn){
-        if (MODE === 'direct') moveTo(downX, downY);
+        if (absMode()) moveTo(downX, downY);
         ctrl({a:'press', btn:'right'});
         ripple(downX, downY); toast("O'ng klik");
         maxPts = 0; moved = 9999;   // keyin tap yuborilmasin
@@ -581,28 +616,30 @@ videoEl.addEventListener('pointermove', function(e){
   // "ikki marta bosib tortish" — bosib ushlab tortish / matn belgilash
   if (armDrag && !dragOn && moved > TAP_SLOP){
     dragOn = true; armDrag = false;
-    if (MODE === 'direct') moveTo(downX, downY);
+    if (absMode()) moveTo(downX, downY);
     ctrl({a:'down', btn:'left'});
     toast('Ushlab tortish');
   }
 
-  if (MODE === 'direct'){
+  // KATTALASHTIRILGAN HOLAT: barmoq tasvirni suradi, kursor joyida qoladi.
+  // (Aks holda chetlarga umuman yetib bo'lmaydi.)
+  if (scale > 1.01){
     if (dragOn){ moveTo(e.clientX, e.clientY); }
-    else if (scale > 1.01 && panning){ tx += dx; ty += dy; clampPan(); applyT(); }
-    else { moveTo(e.clientX, e.clientY); }
+    else if (panning){ tx += dx; ty += dy; clampPan(); applyT(); }
     return;
   }
-  // trackpad: nisbiy siljish (zoomda ham ekranda 1:1 tuyulsin)
-  var k = SENS / Math.max(1, scale);
-  accX += dx * k; accY += dy * k;
+  if (MODE === 'direct'){ moveTo(e.clientX, e.clientY); return; }
+  // trackpad: nisbiy siljish
+  accX += dx * SENS; accY += dy * SENS;
 });
 
+// Kursor siljishini kadr tezligida yuboramiz (35ms -> ~16ms: sezilarli silliqroq)
 setInterval(function(){
   if (Math.abs(accX) >= 1 || Math.abs(accY) >= 1){
     ctrl({a:'moverel', dx:Math.round(accX), dy:Math.round(accY)});
     accX = 0; accY = 0;
   }
-}, 35);
+}, 16);
 
 function endPtr(e){
   if (!(e.pointerId in pts)) return;
@@ -619,10 +656,13 @@ function endPtr(e){
   }
   if (moved < TAP_SLOP && dur < TAP_TIME && !twoAct){
     if (maxPts >= 3){ ctrl({a:'press', btn:'middle'}); toast("O'rta klik"); }
-    else if (maxPts === 2){ ctrl({a:'press', btn:'right'}); toast("O'ng klik"); }
+    else if (maxPts === 2){
+      if (absMode()) moveTo(e.clientX, e.clientY);
+      ctrl({a:'press', btn:'right'}); toast("O'ng klik");
+    }
     else {
       // chap klik: ketma-ket ikki tegish OS darajasida 2x klik bo'lib chiqadi
-      if (MODE === 'direct'){
+      if (absMode()){
         var m = absAt(e.clientX, e.clientY);
         if (m) ctrl({a:'click', x:m.x, y:m.y, btn:'left'});
       } else {
@@ -661,38 +701,178 @@ function sheetOpen(){ return sheet.classList.contains('open'); }
 function openSheet(tab){
   if (tab) selectTab(tab);
   sheet.classList.add('open');
+  setTimeout(syncLayout, 240);
 }
-function closeSheet(){ sheet.classList.remove('open'); try { kbinput.blur(); } catch(e){} }
+function closeSheet(){
+  sheet.classList.remove('open');
+  try { kbinput.blur(); } catch(e){}
+  setTimeout(syncLayout, 240);
+}
 function toggleSheet(tab){
   if (sheetOpen() && (!tab || curTab === tab)) closeSheet();
   else openSheet(tab);
 }
-var curTab = 'keys';
+var curTab = 'sys';
 var tabBtns = document.querySelectorAll('#tabs .tab');
 var paneEls = document.querySelectorAll('.pane');
 function selectTab(name){
   curTab = name;
   for (var i = 0; i < tabBtns.length; i++) tabBtns[i].classList.toggle('active', tabBtns[i].getAttribute('data-tab') === name);
   for (var j = 0; j < paneEls.length; j++) paneEls[j].hidden = (paneEls[j].getAttribute('data-pane') !== name);
+  setTimeout(syncLayout, 60);
 }
 for (var t = 0; t < tabBtns.length; t++){
   tabBtns[t].onclick = function(){ selectTab(this.getAttribute('data-tab')); };
 }
 document.getElementById('sheetgrip').onclick = closeSheet;
-document.getElementById('bKeys').onclick = function(){ toggleSheet('keys'); setTimeout(function(){ try{ kbinput.focus(); }catch(e){} }, 220); };
 document.getElementById('bApps').onclick = function(){ toggleSheet('sys'); };
 document.getElementById('bCfg').onclick  = function(){ toggleSheet('cfg'); };
 
-/* ===== KLAVIATURA (jonli yozish) ===== */
-var ZW = '​';
+/* ===== EKRAN KLAVIATURASI ===== */
+var kbd = document.getElementById('kbd');
+var kkeys = document.getElementById('kkeys');
+var kfnRow = document.querySelector('.krow.kfn');
+var kbnative = document.getElementById('kbnative');
 var kbinput = document.getElementById('kbinput');
+var bKeys = document.getElementById('bKeys');
+
+var ROWS_A = ['1234567890', 'qwertyuiop', 'asdfghjkl', 'zxcvbnm'];
+var ROWS_S = ['1234567890', '-/:;()$&@"', ".,?!'+=_%", '<>[]{}#*^|'];
+var symOn = false, shiftOn = false, shiftLock = false, fnOn = false;
+var mods = {ctrl:false, alt:false, win:false};
+var modLock = {ctrl:false, alt:false, win:false};
+
+function kbdOpen(){ return kbd.classList.contains('open'); }
+function activeMods(){
+  var m = [];
+  if (mods.ctrl) m.push('ctrl');
+  if (mods.alt) m.push('alt');
+  if (shiftOn) m.push('shift');
+  if (mods.win) m.push('win');
+  return m;
+}
+function clearOneShot(){
+  var ch = false;
+  ['ctrl','alt','win'].forEach(function(k){ if (mods[k] && !modLock[k]){ mods[k] = false; ch = true; } });
+  if (shiftOn && !shiftLock){ shiftOn = false; ch = true; }
+  if (ch) paintKeys();
+}
+function sendChar(c){
+  var m = activeMods();
+  var hard = m.filter(function(x){ return x !== 'shift'; });
+  if (hard.length) ctrl({a:'combo', keys:m.concat([c]).join('+')});
+  else if (shiftOn) ctrl({a:'type', text:c.toUpperCase()});
+  else ctrl({a:'type', text:c});
+  clearOneShot();
+}
+function sendSpecial(name){
+  var m = activeMods();
+  if (m.length) ctrl({a:'combo', keys:m.concat([name]).join('+')});
+  else ctrl({a:'special', key:name});
+  clearOneShot();
+}
+function paintKeys(){
+  var mb = kbd.querySelectorAll('button.mod');
+  for (var i = 0; i < mb.length; i++){
+    var k = mb[i].getAttribute('data-mod');
+    var on = (k === 'shift') ? shiftOn : mods[k];
+    var lk = (k === 'shift') ? shiftLock : modLock[k];
+    mb[i].classList.toggle('on', !!on && !lk);
+    mb[i].classList.toggle('lock', !!lk);
+  }
+  var lb = kkeys.querySelectorAll('button[data-ch]');
+  for (var j = 0; j < lb.length; j++){
+    var c = lb[j].getAttribute('data-ch');
+    if (c && c !== ' ') lb[j].textContent = (!symOn && shiftOn) ? c.toUpperCase() : c;
+  }
+}
+function esc(c){
+  return c === '<' ? '&lt;' : c === '>' ? '&gt;' : c === '&' ? '&amp;' : c === '"' ? '&quot;' : c;
+}
+function buildKeys(){
+  var rows = symOn ? ROWS_S : ROWS_A;
+  var h = '';
+  for (var r = 0; r < rows.length; r++){
+    h += '<div class="krow">';
+    if (r === 3) h += '<button class="mod wide2" data-mod="shift">&#8679;</button>';
+    for (var i = 0; i < rows[r].length; i++){
+      var c = rows[r].charAt(i);
+      h += '<button data-ch="' + esc(c) + '">' + esc(c) + '</button>';
+    }
+    if (r === 3) h += '<button class="wide2" data-sp="backspace">&#9003;</button>';
+    h += '</div>';
+  }
+  h += '<div class="krow">' +
+       '<button class="wide2" id="kSym">' + (symOn ? 'ABC' : '?123') + '</button>' +
+       '<button data-ch=",">,</button>' +
+       '<button class="wide4" data-ch=" ">space</button>' +
+       '<button data-ch=".">.</button>' +
+       '<button class="wide2" data-sp="enter">&#9166;</button>' +
+       '</div>';
+  kkeys.innerHTML = h;
+  document.getElementById('kSym').onclick = function(){ symOn = !symOn; buildKeys(); };
+  paintKeys();
+}
+kbd.addEventListener('click', function(e){
+  var b = e.target.closest ? e.target.closest('button') : null;
+  if (!b) return;
+  var md = b.getAttribute('data-mod');
+  if (md){
+    var now = Date.now(), last = parseInt(b.dataset.t || '0', 10);
+    b.dataset.t = now;
+    var dbl = (now - last) < 420;   // ikki marta bosilsa qulflanadi
+    if (md === 'shift'){
+      if (dbl){ shiftLock = !shiftLock; shiftOn = shiftLock; }
+      else { shiftOn = !shiftOn; shiftLock = false; }
+    } else {
+      if (dbl){ modLock[md] = !modLock[md]; mods[md] = modLock[md]; }
+      else { mods[md] = !mods[md]; modLock[md] = false; }
+    }
+    paintKeys();
+    return;
+  }
+  var ch = b.getAttribute('data-ch');
+  if (ch !== null){
+    if (ch === ' ') sendSpecial('space'); else sendChar(ch);
+    return;
+  }
+  var sp = b.getAttribute('data-sp');
+  if (sp) sendSpecial(sp);
+});
+document.getElementById('kFn').onclick = function(){
+  fnOn = !fnOn;
+  if (fnOn && !kfnRow.innerHTML){
+    var h = '';
+    for (var i = 1; i <= 12; i++) h += '<button data-sp="f' + i + '">F' + i + '</button>';
+    kfnRow.innerHTML = h;
+  }
+  kfnRow.hidden = !fnOn;
+  this.classList.toggle('on', fnOn);
+  syncLayout();
+};
+document.getElementById('kNative').onclick = function(){
+  var on = kbnative.hidden;          // yoqmoqchimiz
+  kbnative.hidden = !on;
+  kkeys.style.display = on ? 'none' : '';
+  this.classList.toggle('on', on);
+  if (on) setTimeout(function(){ try { kbinput.focus(); } catch(e){} }, 60);
+  else { try { kbinput.blur(); } catch(e){} }
+  syncLayout();
+};
+function openKbd(){ closeSheet(); kbd.classList.add('open'); bKeys.classList.add('active'); setTimeout(syncLayout, 240); }
+function closeKbd(){ kbd.classList.remove('open'); bKeys.classList.remove('active'); try { kbinput.blur(); } catch(e){} setTimeout(syncLayout, 240); }
+bKeys.onclick = function(){ if (kbdOpen()) closeKbd(); else openKbd(); };
+document.getElementById('kClose').onclick = closeKbd;
+
+/* Telefonning o'z klaviaturasi: yozilgan harf darhol PC ga ketadi */
+var ZW = '​';
 function kbReset(){ kbinput.value = ZW; }
 kbinput.addEventListener('focus', kbReset);
 kbinput.addEventListener('input', function(){
   var v = kbinput.value;
   if (v === ''){ ctrl({a:'special', key:'backspace'}); kbReset(); return; }
   var txt = v.split(ZW).join('');
-  if (txt){ ctrl({a:'type', text:txt}); }
+  if (txt) ctrl({a:'type', text:txt});
   kbReset();
 });
 kbinput.addEventListener('keydown', function(e){
@@ -701,8 +881,9 @@ kbinput.addEventListener('keydown', function(e){
     e.preventDefault(); ctrl({a:'special', key:'backspace'});
   }
 });
-document.getElementById('kbBack').onclick  = function(){ ctrl({a:'special', key:'backspace'}); };
+document.getElementById('kbBack').onclick = function(){ ctrl({a:'special', key:'backspace'}); };
 document.getElementById('kbEnter').onclick = function(){ ctrl({a:'special', key:'enter'}); };
+buildKeys();
 
 /* ===== TUGMALAR ===== */
 var actBtns = document.querySelectorAll('#panes button[data-special],#panes button[data-combo]');
@@ -768,38 +949,122 @@ tCursor.onclick = function(){
   fetch('/api/config?user_id=' + userId + '&cursor=' + (cursorOn?1:0), {headers:HEADERS}).catch(function(){});
 };
 
+/* ===== JOYLASHUV: klaviatura ochilsa tasvir tepaga chiqadi ===== */
+var vv = window.visualViewport;
+var appEl = document.getElementById('app');
+function syncLayout(){
+  var vh = vv ? vv.height : window.innerHeight;
+  var vt = vv ? vv.offsetTop : 0;
+  // klaviatura balandligi = oyna balandligi - ko'rinadigan qism
+  var kb = vv ? Math.max(0, Math.round(window.innerHeight - vv.height - vv.offsetTop)) : 0;
+  appEl.style.top = Math.round(vt) + 'px';
+  appEl.style.bottom = 'auto';
+  appEl.style.height = Math.round(vh) + 'px';
+  sheet.style.bottom = kb + 'px';
+  if (kbd) kbd.style.bottom = kb + 'px';
+  // Pastdagi panel (klaviatura yoki varaq) ochiq bo'lsa tasvir uning tagida qolmasin
+  var bot = 0;
+  if (kbd && kbd.classList.contains('open')) bot = kbd.offsetHeight;
+  else if (sheetOpen()) bot = sheet.offsetHeight;
+  appEl.style.paddingBottom = bot + 'px';
+  clampPan(); applyT();
+}
+if (vv){
+  vv.addEventListener('resize', syncLayout);
+  vv.addEventListener('scroll', syncLayout);
+}
+window.addEventListener('resize', syncLayout);
+window.addEventListener('orientationchange', function(){ setTimeout(syncLayout, 260); });
+
 /* ===== BUTUN EKRAN / LANDSCAPE ===== */
+function browserFs(){
+  var el = document.documentElement;
+  if (document.fullscreenElement) return Promise.resolve();
+  try {
+    if (el.requestFullscreen) return el.requestFullscreen() || Promise.resolve();
+    if (el.webkitRequestFullscreen){ el.webkitRequestFullscreen(); return Promise.resolve(); }
+  } catch(e){}
+  return Promise.reject(new Error('fs'));
+}
 var fsOn = false;
+/* To'liq ekranda Telegram o'z panelini yuqoriga chizadi va tugmalarimiz uning tagida
+   bosilmay qoladi — shuning uchun xavfsiz hudud balandligini o'lchab, pastga tushiramiz. */
+function applySafeArea(){
+  var top = 0;
+  try {
+    if (tg){
+      var a = tg.safeAreaInset || {}, c = tg.contentSafeAreaInset || {};
+      top = (a.top || 0) + (c.top || 0);
+    }
+  } catch(e){}
+  if (!top && fsOn) top = 52;   // o'lcham kelmasa — taxminiy zaxira
+  document.documentElement.style.setProperty('--sat', Math.round(top) + 'px');
+}
 function setFs(on){
   fsOn = on;
   try {
     if (on){
       if (tg && tg.requestFullscreen) tg.requestFullscreen();
-      var el = document.documentElement;
-      if (!document.fullscreenElement && el.requestFullscreen) el.requestFullscreen().catch(function(){});
+      browserFs().catch(function(){});
     } else {
       if (document.fullscreenElement && document.exitFullscreen) document.exitFullscreen().catch(function(){});
       if (tg && tg.exitFullscreen) tg.exitFullscreen();
     }
   } catch(e){}
   document.getElementById('fsbtn').classList.toggle('active', on);
+  applySafeArea();
+  setTimeout(function(){ applySafeArea(); syncLayout(); }, 320);
 }
 document.getElementById('fsbtn').onclick = function(){ setFs(!fsOn); };
+// Zaxira chiqish yo'li: pastdagi varaqdan (u hech qachon qoplanmaydi)
+document.getElementById('btnExitFs').onclick = function(){ setFs(false); toast('Butun ekrandan chiqildi'); };
+try {
+  if (tg && tg.onEvent){
+    tg.onEvent('safeAreaChanged', applySafeArea);
+    tg.onEvent('contentSafeAreaChanged', applySafeArea);
+    tg.onEvent('fullscreenChanged', function(){
+      try { fsOn = !!tg.isFullscreen; } catch(e){}
+      document.getElementById('fsbtn').classList.toggle('active', fsOn);
+      applySafeArea(); setTimeout(syncLayout, 300);
+    });
+    tg.onEvent('fullscreenFailed', function(){ toast('To’liq ekran ochilmadi'); });
+  }
+} catch(e){}
+applySafeArea();
+
 var landOn = false;
-document.getElementById('sysLand').onclick = function(){
-  landOn = !landOn;
-  try {
-    if (landOn){
-      setFs(true);
-      setTimeout(function(){ try { if (screen.orientation && screen.orientation.lock) screen.orientation.lock('landscape'); } catch(e){} }, 260);
-    } else {
-      try { if (screen.orientation && screen.orientation.unlock) screen.orientation.unlock(); } catch(e){}
-    }
-  } catch(e){}
-  this.classList.toggle('active', landOn);
-  this.textContent = landOn ? '⛶ Portret' : '⛶ Landscape';
-};
-window.addEventListener('resize', function(){ clampPan(); applyT(); });
+function landBtns(){ return [document.getElementById('sysLand'), document.getElementById('rotbtn')]; }
+function landPaint(){
+  var b = landBtns();
+  if (b[0]){ b[0].classList.toggle('active', landOn); b[0].textContent = landOn ? '⛶ Portret' : '⛶ Landscape'; }
+  if (b[1]) b[1].classList.toggle('active', landOn);
+}
+function doLandscape(){
+  // MUHIM: lock() foydalanuvchi bosgan paytda, to'liq ekranda chaqirilishi shart.
+  // setTimeout ichida chaqirilsa brauzer rad etadi — shuning uchun promise zanjiri.
+  if (landOn){
+    landOn = false;
+    try { if (screen.orientation && screen.orientation.unlock) screen.orientation.unlock(); } catch(e){}
+    try { if (tg && tg.unlockOrientation) tg.unlockOrientation(); } catch(e){}
+    landPaint(); toast('Burilish erkin'); setTimeout(syncLayout, 300);
+    return;
+  }
+  try { if (tg && tg.requestFullscreen) tg.requestFullscreen(); } catch(e){}
+  try { if (tg && tg.unlockOrientation) tg.unlockOrientation(); } catch(e){}
+  browserFs().catch(function(){}).then(function(){
+    if (!(screen.orientation && screen.orientation.lock)) throw new Error('nolock');
+    return screen.orientation.lock('landscape');
+  }).then(function(){
+    landOn = true; landPaint(); toast('Landscape qulflandi'); setTimeout(syncLayout, 300);
+  }).catch(function(){
+    // Qulflab bo'lmadi (iOS/Telegram cheklovi) — nima qilish kerakligini aytamiz
+    landOn = false; landPaint();
+    toast('Telefonni yon buring — avtoburilish yoniq bo’lsin');
+    setTimeout(syncLayout, 300);
+  });
+}
+document.getElementById('sysLand').onclick = doLandscape;
+document.getElementById('rotbtn').onclick = doLandscape;
 
 /* ===== YORDAM ===== */
 var help = document.getElementById('help');
@@ -856,7 +1121,7 @@ function fmSend(path){
   fmpath.textContent = '📤 Telegramga yuborilmoqda...';
   fetch('/api/fs/send?user_id=' + userId + '&path=' + encodeURIComponent(path), {headers:HEADERS})
     .then(function(r){ return r.json(); })
-    .then(function(d){ fmpath.textContent = d.ok ? '✅ Telegramga yuborildi' : ('❌ ' + (d.error || 'xato')); setTimeout(function(){ fmpath.textContent = fmCur; }, 2800); })
+    .then(function(d){ fmpath.textContent = d.ok ? ('✅ Telegramga yuborildi — ' + (d.as || 'fayl')) : ('❌ ' + (d.error || 'xato')); setTimeout(function(){ fmpath.textContent = fmCur; }, 2800); })
     .catch(function(e){ fmpath.textContent = '❌ ' + e.message; });
 }
 function fmOpen(path){

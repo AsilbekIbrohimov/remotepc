@@ -20,7 +20,7 @@ from dotenv import load_dotenv
 # Tez ekran olish: dxcam (DXGI, GPU-tez ~100+fps). Bo'lmasa mss, u ham bo'lmasa PIL.
 # ON-DEMAND: faqat oqim (Mini App ochiq) bo'lganda grab qilinadi -> bekorga yuk yo'q.
 _HAS_DX = False
-_dx_last = {"frame": None}
+_dx_last = {"frame": None, "fresh": True}
 try:
     import dxcam
     _dx = dxcam.create(output_color="BGR")
@@ -37,7 +37,8 @@ load_dotenv(BASE_DIR / ".env")
 
 OWNER_ID = int(os.environ["TG_OWNER_ID"])
 BOT_TOKEN = os.environ.get("TG_BOT_TOKEN", "").strip().strip("'\"")
-MAX_TG_BYTES = 50 * 1024 * 1024
+MAX_TG_BYTES = (2000 if os.environ.get("USE_LOCAL_BOT_API", "").strip() in ("1", "true", "yes")
+                else 50) * 1024 * 1024
 
 # Bot API bazasi (lokal server yoqilgan bo'lsa 2GB limit)
 _USE_LOCAL = os.environ.get("USE_LOCAL_BOT_API", "").strip() in ("1", "true", "yes")
@@ -98,7 +99,10 @@ SPECIAL_KEYS = {
     "pageup": 0x21, "pagedown": 0x22,
     "volup": 0xAF, "voldown": 0xAE, "mute": 0xAD,
     "playpause": 0xB3, "next": 0xB0, "prev": 0xB1,
+    "insert": 0x2D, "capslock": 0x14, "printscreen": 0x2C, "menu": 0x5D,
 }
+# F1-F12 (combo'da ham ishlaydi: masalan alt+f4)
+SPECIAL_KEYS.update({f"f{i}": 0x6F + i for i in range(1, 13)})
 
 MODIFIERS = {"ctrl": 0x11, "alt": 0x12, "shift": 0x10, "win": 0x5B}
 
@@ -213,10 +217,14 @@ def _capture_bgr(allscreens: bool):
             f = _dx.grab()  # o'zgarmagan bo'lsa None -> oxirgi kadrni ishlatamiz
             if f is not None:
                 _dx_last["frame"] = f
+                _dx_last["fresh"] = True
+            else:
+                _dx_last["fresh"] = False
             if _dx_last["frame"] is not None:
                 return _dx_last["frame"]
         except Exception:
             pass
+    _dx_last["fresh"] = True  # dxcam ishlamadi — o'zgarishni bilolmaymiz, doim yangi deb hisoblaymiz
     if _mss_mod is not None:
         try:
             with _mss_mod.mss() as sct:
@@ -230,23 +238,43 @@ def _capture_bgr(allscreens: bool):
     return cv2.cvtColor(np.asarray(img), cv2.COLOR_RGB2BGR)
 
 
-def take_jpeg_bytes() -> bytes:
+_last_cursor = {"pos": None}
+
+
+def take_jpeg_bytes(skip_unchanged: bool = False):
+    """JPEG kadr qaytaradi.
+
+    skip_unchanged=True bo'lsa va ekran ham, kursor ham qimirlamagan bo'lsa None
+    qaytaradi — shunda kadr qayta kodlanmaydi va tunnelga bir xil tasvir
+    takror yuborilmaydi (tunnel o'tkazuvchanligi harakat uchun bo'shab qoladi).
+    """
     w = STREAM_CFG["w"]
     q = STREAM_CFG["q"]
     allscreens = bool(STREAM_CFG.get("allscreens"))
     ox, oy, _, _ = _capture_bounds()
     frame = _capture_bgr(allscreens)
+
+    cur = None
+    if STREAM_CFG.get("cursor"):
+        try:
+            pt = _POINT()
+            _user32.GetCursorPos(ctypes.byref(pt))
+            cur = (pt.x, pt.y)
+        except Exception:
+            pass
+    if skip_unchanged and not _dx_last.get("fresh", True) and cur == _last_cursor["pos"]:
+        return None
+    _last_cursor["pos"] = cur
+
     h, wid = frame.shape[:2]
     if wid > w:
         ratio = w / wid
         frame = cv2.resize(frame, (w, int(h * ratio)), interpolation=cv2.INTER_LINEAR)
     else:
         ratio = 1.0
-    if STREAM_CFG.get("cursor"):
+    if cur is not None:
         try:
-            pt = _POINT()
-            _user32.GetCursorPos(ctypes.byref(pt))
-            _draw_cursor_cv(frame, int((pt.x - ox) * ratio), int((pt.y - oy) * ratio))
+            _draw_cursor_cv(frame, int((cur[0] - ox) * ratio), int((cur[1] - oy) * ratio))
         except Exception:
             pass
     ok, enc = cv2.imencode(".jpg", frame, [cv2.IMWRITE_JPEG_QUALITY, q])
@@ -347,6 +375,7 @@ async def stream_api(request: web.Request) -> web.StreamResponse:
     await resp.prepare(request)
     loop = asyncio.get_event_loop()
     last_check = time.time()
+    last_sent = 0.0
     try:
         while True:
             # Har ~2s da ruxsatni qayta tekshiramiz — egasi uzsa oqim darhol to'xtaydi
@@ -354,13 +383,25 @@ async def stream_api(request: web.Request) -> web.StreamResponse:
                 last_check = time.time()
                 if not _auth_ok(request):
                     break
-            jpeg = await loop.run_in_executor(None, take_jpeg_bytes)
+            target = 1.0 / max(1, STREAM_CFG["fps"])
+            t0 = time.perf_counter()
+            jpeg = await loop.run_in_executor(None, take_jpeg_bytes, True)
+            if jpeg is None:
+                # Ekran qimirlamadi. Sekin aylanamiz, lekin har ~1s da baribir
+                # bitta kadr yuboramiz (ulanish tirik qolsin, kadr yo'qolgan bo'lsa tiklansin).
+                if time.time() - last_sent < 1.0:
+                    await asyncio.sleep(min(target, 0.06))
+                    continue
+                jpeg = await loop.run_in_executor(None, take_jpeg_bytes)
             await resp.write(
                 b"--frame\r\nContent-Type: image/jpeg\r\n"
                 + f"Content-Length: {len(jpeg)}\r\n\r\n".encode()
                 + jpeg + b"\r\n"
             )
-            await asyncio.sleep(1.0 / STREAM_CFG["fps"])
+            last_sent = time.time()
+            # Kutishdan ishlagan vaqtni ayiramiz — aks holda haqiqiy FPS
+            # so'ralgandan ancha past bo'lib qolardi (olish+kodlash vaqti ustiga qo'shilardi).
+            await asyncio.sleep(max(0.0, target - (time.perf_counter() - t0)))
     except (ConnectionResetError, asyncio.CancelledError, ConnectionError):
         pass
     except Exception as e:
@@ -426,7 +467,9 @@ async def control_api(request: web.Request) -> web.Response:
 
 
 async def ws_api(request: web.Request) -> web.WebSocketResponse:
-    ws = web.WebSocketResponse()
+    # heartbeat: o'lik ulanish (tunnel uzilsa) 20s ichida aniqlanadi va yopiladi,
+    # mijoz esa darhol qayta ulanadi — boshqaruv "osilib" qolmaydi.
+    ws = web.WebSocketResponse(heartbeat=20)
     await ws.prepare(request)
     if not _auth_ok(request):
         await ws.close()
@@ -573,18 +616,45 @@ async def fs_send_api(request: web.Request) -> web.Response:
         return _cors(web.json_response({"error": "Bot token yo'q"}, status=500))
     size = p.stat().st_size
     if size > MAX_TG_BYTES:
-        return _cors(web.json_response({"error": f"{size // (1024**2)}MB — 50MB dan katta"}, status=400))
-    try:
+        lim = MAX_TG_BYTES // (1024 ** 2)
+        return _cors(web.json_response(
+            {"error": f"{size // (1024**2)}MB — {lim}MB dan katta"}, status=400))
+    # Rasm/video/ovoz bo'lsa hujjat emas, haqiqiy media qilib yuboramiz
+    ext = p.suffix.lower()
+    if ext == ".gif":
+        method, field = "sendAnimation", "animation"
+    elif ext in {".jpg", ".jpeg", ".png", ".webp", ".bmp"} and size <= 10 * 1024 * 1024:
+        method, field = "sendPhoto", "photo"
+    elif ext in {".mp4", ".mov", ".mkv", ".avi", ".webm", ".m4v", ".wmv", ".flv", ".mpg", ".mpeg", ".3gp"}:
+        method, field = "sendVideo", "video"
+    elif ext in {".mp3", ".m4a", ".aac", ".flac", ".wav", ".ogg", ".oga", ".opus", ".wma"}:
+        method, field = "sendAudio", "audio"
+    else:
+        method, field = "sendDocument", "document"
+    blob = p.read_bytes()
+
+    async def _post(meth: str, fld: str):
         data = aiohttp.FormData()
         data.add_field("chat_id", str(OWNER_ID))
-        data.add_field("document", p.read_bytes(), filename=p.name)
-        url = f"https://api.telegram.org/bot{BOT_TOKEN}/sendDocument"
+        if meth == "sendVideo":
+            data.add_field("supports_streaming", "true")
+        data.add_field(fld, blob, filename=p.name)
+        url = f"{_BOT_API_BASE}/bot{BOT_TOKEN}/{meth}"
         async with aiohttp.ClientSession() as s:
-            async with s.post(url, data=data, timeout=aiohttp.ClientTimeout(total=120)) as r:
-                jr = await r.json()
-                if not jr.get("ok"):
-                    return _cors(web.json_response({"error": jr.get("description", "Telegram xato")}, status=500))
-        return _cors(web.json_response({"ok": True}))
+            async with s.post(url, data=data, timeout=aiohttp.ClientTimeout(total=1800)) as r:
+                return await r.json()
+
+    try:
+        jr = await _post(method, field)
+        # Media bo'lib ketmasa (kodek/o'lcham) — hujjat qilib qayta urinamiz
+        if not jr.get("ok") and method != "sendDocument":
+            method = "sendDocument"
+            jr = await _post(method, "document")
+        if not jr.get("ok"):
+            return _cors(web.json_response({"error": jr.get("description", "Telegram xato")}, status=500))
+        kind = {"sendPhoto": "rasm", "sendVideo": "video", "sendAudio": "musiqa",
+                "sendAnimation": "GIF", "sendDocument": "hujjat"}.get(method, "fayl")
+        return _cors(web.json_response({"ok": True, "as": kind}))
     except Exception as e:
         return _cors(web.json_response({"error": str(e)}, status=500))
 
